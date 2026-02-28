@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Network Automation Toolkit</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-text">
+      <h1>Network Automation Toolkit</h1>
+      <p>Local utilities for parsing, validation, transformation, and templating.</p>
+    </div>
+    <div class="theme-controls">
+      <label for="theme-select">Theme</label>
+      <select id="theme-select" aria-label="Select theme">
+        <option value="sand">Sand</option>
+        <option value="solarized">Solarized</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </div>
+  </header>
+
+  <nav id="tabs"></nav>
+  <main id="panels"></main>
+
+  <template id="panel-template">
+    <section class="panel" hidden>
+      <h2></h2>
+      <p class="desc"></p>
+      <p class="usecase"></p>
+      <p class="chooser"></p>
+      <div class="grid"></div>
+      <div class="actions">
+        <button class="run">Run</button>
+      </div>
+      <pre class="output"></pre>
+    </section>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
