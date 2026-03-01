@@ -427,14 +427,16 @@ button.run.ghost {
 
 .live-code-editor {
   position: relative;
+  display: grid;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--input-bg);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .live-code-highlight,
 .live-code-input {
+  grid-area: 1 / 1;
   margin: 0;
   padding: 0.5rem 0.6rem;
   font: inherit;
@@ -451,8 +453,7 @@ button.run.ghost {
 }
 
 .live-code-input {
-  position: absolute;
-  inset: 0;
+  position: relative;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -508,15 +509,17 @@ button.run.ghost {
 
 .regex-pattern-editor {
   position: relative;
+  display: grid;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--input-bg);
-  overflow: hidden;
+  overflow: visible;
   min-height: 110px;
 }
 
 .regex-highlight,
 .regex-pattern-input {
+  grid-area: 1 / 1;
   margin: 0;
   padding: 0.5rem 0.6rem;
   font: inherit;
@@ -533,8 +536,7 @@ button.run.ghost {
 }
 
 .regex-pattern-input {
-  position: absolute;
-  inset: 0;
+  position: relative;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -649,15 +651,17 @@ button.run.ghost {
 
 .regex-text-editor {
   position: relative;
+  display: grid;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--input-bg);
-  overflow: hidden;
+  overflow: visible;
   min-height: 320px;
 }
 
 .regex-text-highlight,
 .regex-text-input {
+  grid-area: 1 / 1;
   margin: 0;
   padding: 0.5rem 0.6rem;
   font: inherit;
@@ -674,8 +678,7 @@ button.run.ghost {
 }
 
 .regex-text-input {
-  position: absolute;
-  inset: 0;
+  position: relative;
   border: 0;
   border-radius: 0;
   background: transparent;

@@ -714,6 +714,7 @@ function createCodeEditor(field, inputs) {
   input.value = field.value || '';
   input.rows = rows;
   input.spellcheck = false;
+  input.wrap = 'off';
   highlightLayer.style.minHeight = `${minHeightPx}px`;
 
   const syncHighlight = () => {
@@ -825,6 +826,7 @@ function createField(field, inputs) {
     input.value = field.value || '';
     input.spellcheck = false;
     input.rows = 4;
+    input.wrap = 'off';
 
     const syncHighlight = () => {
       highlightLayer.innerHTML = highlightRegexPattern(input.value);
