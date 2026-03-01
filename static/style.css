@@ -692,13 +692,32 @@ button.run.ghost {
   border-radius: 4px;
 }
 
-.rgx-hit-a {
-  background: rgba(250, 204, 21, 0.45);
+.rgx-hit-p0 { background: rgba(253, 224, 71, 0.44); }
+.rgx-hit-p1 { background: rgba(125, 211, 252, 0.34); }
+.rgx-hit-p2 { background: rgba(134, 239, 172, 0.35); }
+.rgx-hit-p3 { background: rgba(251, 191, 36, 0.32); }
+.rgx-hit-p4 { background: rgba(196, 181, 253, 0.36); }
+.rgx-hit-p5 { background: rgba(251, 146, 60, 0.30); }
+.rgx-hit-p6 { background: rgba(244, 114, 182, 0.26); }
+.rgx-hit-p7 { background: rgba(45, 212, 191, 0.30); }
+.rgx-hit-p8 { background: rgba(129, 140, 248, 0.30); }
+.rgx-hit-p9 { background: rgba(163, 230, 53, 0.30); }
+
+.rgx-group-hit {
+  border-bottom: 2px solid;
+  border-radius: 2px;
 }
 
-.rgx-hit-b {
-  background: rgba(14, 165, 233, 0.35);
-}
+.rgx-group-p0 { border-color: #dc2626; }
+.rgx-group-p1 { border-color: #2563eb; }
+.rgx-group-p2 { border-color: #16a34a; }
+.rgx-group-p3 { border-color: #9333ea; }
+.rgx-group-p4 { border-color: #0891b2; }
+.rgx-group-p5 { border-color: #c2410c; }
+.rgx-group-p6 { border-color: #be123c; }
+.rgx-group-p7 { border-color: #0f766e; }
+.rgx-group-p8 { border-color: #4f46e5; }
+.rgx-group-p9 { border-color: #65a30d; }
 
 .regex-live-status {
   margin: 0.45rem 0 0;
@@ -709,6 +728,40 @@ button.run.ghost {
 .regex-live-status.error {
   color: #dc2626;
   font-weight: 600;
+}
+
+.regex-hover-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: min(520px, calc(100vw - 16px));
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 10px 26px rgba(2, 6, 23, 0.26);
+  padding: 0.55rem 0.65rem;
+  font-size: 0.83rem;
+}
+
+.regex-hover-tip code {
+  font-family: "JetBrains Mono", Consolas, monospace;
+}
+
+.regex-tip-title {
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+
+.regex-tip-groups-label {
+  margin-top: 0.35rem;
+  font-weight: 600;
+}
+
+.regex-tip-groups {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
 }
 
 @media (max-width: 900px) {

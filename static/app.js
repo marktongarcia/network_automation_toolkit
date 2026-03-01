@@ -401,19 +401,53 @@ function parseInlineRegexFlags(pattern) {
   };
 }
 
+const regexIndicesSupported = (() => {
+  try {
+    return new RegExp('.', 'd').hasIndices === true;
+  } catch (err) {
+    return false;
+  }
+})();
+
+function buildMatchInnerHtml(text, matchStart, matchEnd, groups, matchId) {
+  const innerGroups = (groups || [])
+    .filter((g) => Number.isInteger(g.start) && Number.isInteger(g.end) && g.start >= matchStart && g.end <= matchEnd && g.end > g.start)
+    .sort((a, b) => a.start - b.start || b.end - a.end);
+
+  const nonOverlapping = [];
+  let cursor = matchStart;
+  innerGroups.forEach((g) => {
+    if (g.start < cursor) return;
+    nonOverlapping.push(g);
+    cursor = g.end;
+  });
+
+  let html = '';
+  cursor = matchStart;
+  nonOverlapping.forEach((g) => {
+    html += escapeHtml(text.slice(cursor, g.start));
+    const groupClass = `rgx-group-hit rgx-group-p${(g.group - 1) % 10}`;
+    const part = escapeHtml(text.slice(g.start, g.end)) || ' ';
+    html += `<span class="${groupClass}" data-mid="${matchId}" data-gid="${g.group}">${part}</span>`;
+    cursor = g.end;
+  });
+  html += escapeHtml(text.slice(cursor, matchEnd));
+  return html;
+}
+
 function buildRegexTextHighlights(text, rawPattern) {
   if (!rawPattern.trim()) {
-    return { ok: true, html: escapeHtml(text), status: 'Enter a pattern to preview matches.' };
+    return { ok: true, html: escapeHtml(text), status: 'Enter a pattern to preview matches.', meta: [] };
   }
 
   const parsed = parseInlineRegexFlags(rawPattern);
-  const flags = Array.from(new Set(`${parsed.flags}g`)).join('');
+  const flags = Array.from(new Set(`${parsed.flags}g${regexIndicesSupported ? 'd' : ''}`)).join('');
   let regex;
 
   try {
     regex = new RegExp(parsed.source, flags);
   } catch (err) {
-    return { ok: false, html: escapeHtml(text), status: `Pattern error: ${err.message}` };
+    return { ok: false, html: escapeHtml(text), status: `Pattern error: ${err.message}`, meta: [] };
   }
 
   const segments = [];
@@ -421,12 +455,35 @@ function buildRegexTextHighlights(text, rawPattern) {
   let nextStart = 0;
   let hit;
   while ((hit = regex.exec(text)) !== null) {
-    const start = hit.index;
-    const end = start + hit[0].length;
+    const indexRange = regexIndicesSupported && hit.indices && hit.indices[0] ? hit.indices[0] : null;
+    const start = indexRange ? indexRange[0] : hit.index;
+    const end = indexRange ? indexRange[1] : start + hit[0].length;
     if (end < start) {
       break;
     }
-    matches.push({ start, end });
+    const groups = [];
+    for (let i = 1; i < hit.length; i += 1) {
+      const groupValue = hit[i];
+      let gStart = null;
+      let gEnd = null;
+      if (regexIndicesSupported && hit.indices && hit.indices[i]) {
+        gStart = hit.indices[i][0];
+        gEnd = hit.indices[i][1];
+      }
+      groups.push({
+        group: i,
+        value: groupValue,
+        start: Number.isInteger(gStart) ? gStart : null,
+        end: Number.isInteger(gEnd) ? gEnd : null
+      });
+    }
+    matches.push({
+      id: matches.length,
+      start,
+      end,
+      value: hit[0],
+      groups
+    });
     if (hit[0] === '') {
       regex.lastIndex += 1;
       if (regex.lastIndex > text.length) break;
@@ -434,22 +491,25 @@ function buildRegexTextHighlights(text, rawPattern) {
   }
 
   if (matches.length === 0) {
-    return { ok: true, html: escapeHtml(text), status: 'No matches yet.' };
+    return { ok: true, html: escapeHtml(text), status: 'No matches yet.', meta: [] };
   }
 
-  matches.forEach((range, idx) => {
-    segments.push(escapeHtml(text.slice(nextStart, range.start)));
-    const matchText = escapeHtml(text.slice(range.start, range.end));
-    const className = idx % 2 === 0 ? 'rgx-hit rgx-hit-a' : 'rgx-hit rgx-hit-b';
-    segments.push(`<span class="${className}">${matchText || ' '}</span>`);
-    nextStart = range.end;
+  let groupCount = 0;
+  matches.forEach((matchInfo, idx) => {
+    segments.push(escapeHtml(text.slice(nextStart, matchInfo.start)));
+    const matchClass = `rgx-hit rgx-hit-p${idx % 10}`;
+    const inner = buildMatchInnerHtml(text, matchInfo.start, matchInfo.end, matchInfo.groups, matchInfo.id);
+    segments.push(`<span class="${matchClass}" data-mid="${matchInfo.id}">${inner || ' '}</span>`);
+    nextStart = matchInfo.end;
+    groupCount += matchInfo.groups.filter((g) => g.value !== undefined && g.value !== null).length;
   });
   segments.push(escapeHtml(text.slice(nextStart)));
 
   return {
     ok: true,
     html: segments.join(''),
-    status: `${matches.length} match${matches.length === 1 ? '' : 'es'} highlighted in real-time.`
+    status: `${matches.length} match${matches.length === 1 ? '' : 'es'} and ${groupCount} group${groupCount === 1 ? '' : 's'} highlighted in real-time.`,
+    meta: matches
   };
 }
 
@@ -1042,6 +1102,71 @@ function attachPythonLintPreview(tool, inputs, panel) {
   runLint();
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getTextareaMetrics(textarea) {
+  const style = getComputedStyle(textarea);
+  const font = style.font || `${style.fontSize} ${style.fontFamily}`;
+  const lineHeight = Number.parseFloat(style.lineHeight) || (Number.parseFloat(style.fontSize) || 16) * 1.45;
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+  const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+  const probe = document.createElement('span');
+  probe.textContent = 'M';
+  probe.style.position = 'absolute';
+  probe.style.visibility = 'hidden';
+  probe.style.whiteSpace = 'pre';
+  probe.style.font = font;
+  document.body.appendChild(probe);
+  const charWidth = probe.getBoundingClientRect().width || 8;
+  probe.remove();
+  return { lineHeight, charWidth, paddingLeft, paddingTop };
+}
+
+function indexFromMouseInTextarea(event, textarea) {
+  const rect = textarea.getBoundingClientRect();
+  const metrics = getTextareaMetrics(textarea);
+  const x = event.clientX - rect.left + textarea.scrollLeft - metrics.paddingLeft;
+  const y = event.clientY - rect.top + textarea.scrollTop - metrics.paddingTop;
+
+  const col = Math.max(0, Math.floor(x / metrics.charWidth));
+  const row = Math.max(0, Math.floor(y / metrics.lineHeight));
+  const lines = textarea.value.split('\n');
+  const safeRow = clamp(row, 0, Math.max(lines.length - 1, 0));
+
+  let idx = 0;
+  for (let i = 0; i < safeRow; i += 1) {
+    idx += lines[i].length + 1;
+  }
+  idx += clamp(col, 0, lines[safeRow].length);
+  return idx;
+}
+
+function escapeTip(value) {
+  return escapeHtml(String(value ?? ''));
+}
+
+function buildRegexHoverHtml(matchInfo, hoveredGroupId = null) {
+  if (!matchInfo) return '';
+
+  const groupRows = (matchInfo.groups || []).map((g) => {
+    const hasPos = Number.isInteger(g.start) && Number.isInteger(g.end);
+    const pos = hasPos ? `[${g.start}, ${g.end})` : '[?, ?)';
+    const mark = hoveredGroupId === g.group ? ' <strong>(hovered)</strong>' : '';
+    const val = g.value === undefined || g.value === null ? '(no capture)' : g.value;
+    return `<li><code>Group ${g.group}</code>${mark} ${escapeTip(pos)} = <code>${escapeTip(val)}</code></li>`;
+  }).join('');
+
+  return `
+    <div class="regex-tip-title">Match ${matchInfo.id + 1}</div>
+    <div><code>Range</code> ${escapeTip(`[${matchInfo.start}, ${matchInfo.end})`)}</div>
+    <div><code>Text</code> <code>${escapeTip(matchInfo.value)}</code></div>
+    <div class="regex-tip-groups-label">Groups</div>
+    <ul class="regex-tip-groups">${groupRows || '<li><code>(none)</code></li>'}</ul>
+  `;
+}
+
 async function runTool(tool, inputs, outputEl) {
   if (tool.id === 'python-playground') {
     await execPythonPlayground(tool, inputs, outputEl, inputs.__py_command?.value || '', { clearPrompt: true });
@@ -1390,6 +1515,7 @@ function init() {
       const textField = panel.querySelector('.field[data-key="text"]');
 
       if (patternInput && textInput && textField) {
+        let latestMatchMeta = [];
         const editor = document.createElement('div');
         editor.className = 'regex-text-editor';
 
@@ -1399,6 +1525,7 @@ function init() {
 
         textInput.classList.add('regex-text-input');
         textInput.spellcheck = false;
+        textInput.wrap = 'off';
 
         textInput.parentNode.insertBefore(editor, textInput);
         editor.appendChild(highlightLayer);
@@ -1408,14 +1535,71 @@ function init() {
         status.className = 'regex-live-status';
         textField.appendChild(status);
 
+        const hoverTip = document.createElement('div');
+        hoverTip.className = 'regex-hover-tip';
+        hoverTip.hidden = true;
+        document.body.appendChild(hoverTip);
+
+        const hideTip = () => {
+          hoverTip.hidden = true;
+        };
+
+        const showTipAt = (x, y, html) => {
+          hoverTip.innerHTML = html;
+          hoverTip.hidden = false;
+          const margin = 14;
+          const rect = hoverTip.getBoundingClientRect();
+          const left = Math.min(x + margin, window.innerWidth - rect.width - 8);
+          const top = Math.min(y + margin, window.innerHeight - rect.height - 8);
+          hoverTip.style.left = `${Math.max(8, left)}px`;
+          hoverTip.style.top = `${Math.max(8, top)}px`;
+        };
+
+        const findHoverTarget = (index) => {
+          for (const m of latestMatchMeta) {
+            if (index >= m.start && index < m.end) {
+              let hoveredGroupId = null;
+              for (const g of (m.groups || [])) {
+                if (Number.isInteger(g.start) && Number.isInteger(g.end) && index >= g.start && index < g.end) {
+                  hoveredGroupId = g.group;
+                  break;
+                }
+              }
+              return { match: m, groupId: hoveredGroupId };
+            }
+          }
+          return null;
+        };
+
+        textInput.addEventListener('mousemove', (event) => {
+          if (!latestMatchMeta.length) {
+            hideTip();
+            return;
+          }
+          const idx = indexFromMouseInTextarea(event, textInput);
+          const target = findHoverTarget(idx);
+          if (!target) {
+            hideTip();
+            return;
+          }
+          showTipAt(event.clientX, event.clientY, buildRegexHoverHtml(target.match, target.groupId));
+        });
+        textInput.addEventListener('mouseleave', hideTip);
+        textInput.addEventListener('blur', hideTip);
+        textInput.addEventListener('scroll', hideTip);
+
         const syncHighlights = () => {
           const result = buildRegexTextHighlights(textInput.value, patternInput.value);
           highlightLayer.innerHTML = result.html;
           if (!textInput.value.endsWith('\n')) {
             highlightLayer.innerHTML += '\n';
           }
+          latestMatchMeta = result.meta || [];
           status.textContent = result.status;
           status.classList.toggle('error', !result.ok);
+          if (!result.ok) {
+            hideTip();
+          }
         };
 
         textInput.addEventListener('scroll', () => {
