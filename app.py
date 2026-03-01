@@ -492,8 +492,40 @@ def python_playground():
         FUNCTION_REPL_SESSIONS.pop(session_id, None)
         return jsonify({"ok": True, "result": "Session reset."})
 
+    if action == "lint":
+        code_text = payload.get("function_code", "")
+        var1_info = parse_playground_var(payload.get("var1", ""))
+        var2_info = parse_playground_var(payload.get("var2", ""))
+        var3_info = parse_playground_var(payload.get("var3", ""))
+
+        syntax = {"valid": True, "message": "Syntax OK.", "line": None, "offset": None}
+        if code_text.strip():
+            try:
+                ast.parse(code_text)
+            except SyntaxError as exc:
+                syntax = {
+                    "valid": False,
+                    "message": exc.msg or "invalid syntax",
+                    "line": exc.lineno,
+                    "offset": exc.offset,
+                }
+        else:
+            syntax["message"] = "Code pad is empty."
+
+        return jsonify(
+            {
+                "ok": True,
+                "result": {
+                    "syntax": syntax,
+                    "var1": {"type": var1_info["type"], "warning": var1_info["warning"]},
+                    "var2": {"type": var2_info["type"], "warning": var2_info["warning"]},
+                    "var3": {"type": var3_info["type"], "warning": var3_info["warning"]},
+                },
+            }
+        )
+
     if action != "exec":
-        return error_response("Unsupported action. Use init, exec, or reset.")
+        return error_response("Unsupported action. Use init, lint, exec, or reset.")
 
     session_id = payload.get("session_id", "")
     code_text = payload.get("function_code", "")

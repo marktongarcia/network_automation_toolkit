@@ -804,6 +804,237 @@ function createField(field, inputs) {
   return wrap;
 }
 
+function debounce(fn, waitMs) {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), waitMs);
+  };
+}
+
+function collectPayload(inputs, extras = {}) {
+  const payload = {};
+  Object.entries(inputs).forEach(([key, el]) => {
+    if (key.startsWith('__')) return;
+    payload[key] = el.value;
+  });
+  return { ...payload, ...extras };
+}
+
+const autoPreviewConfigs = {
+  xpath: { delayMs: 250, required: ['xml', 'xpath'] },
+  jmespath: { delayMs: 250, required: ['data', 'expression'] },
+  'json-schema': { delayMs: 650, required: ['schema', 'data'] },
+  jinja2: { delayMs: 700, required: ['template'] },
+  textfsm: { delayMs: 900, required: ['template', 'text'] },
+  ttp: { delayMs: 900, required: ['template', 'data'] }
+};
+
+function formatAutoPreviewOutput(toolId, data) {
+  if (!data || data.ok !== true) {
+    return pretty(data);
+  }
+  if (toolId === 'xpath') {
+    return pretty({ count: data.count, results: data.results });
+  }
+  if (toolId === 'jmespath') {
+    return pretty(data.result);
+  }
+  if (toolId === 'json-schema') {
+    return pretty({
+      valid: data.valid,
+      message: data.message,
+      path: data.path || []
+    });
+  }
+  if (toolId === 'jinja2') {
+    return `${data.result || ''}`;
+  }
+  if (toolId === 'textfsm') {
+    return pretty({
+      headers: data.headers,
+      record_count: (data.records || []).length,
+      records: data.records || []
+    });
+  }
+  if (toolId === 'ttp') {
+    return pretty(data.result);
+  }
+  return pretty(data);
+}
+
+function attachAutoPreview(tool, inputs, outputEl, panel) {
+  const config = autoPreviewConfigs[tool.id];
+  if (!config) return;
+
+  const controls = document.createElement('div');
+  controls.className = 'live-preview-controls';
+
+  const label = document.createElement('label');
+  label.className = 'live-preview-toggle';
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.checked = true;
+  const labelText = document.createElement('span');
+  labelText.textContent = 'Auto preview';
+  label.appendChild(toggle);
+  label.appendChild(labelText);
+
+  const status = document.createElement('span');
+  status.className = 'live-preview-status';
+  status.textContent = 'Auto preview is on.';
+
+  controls.appendChild(label);
+  controls.appendChild(status);
+  panel.querySelector('.actions').after(controls);
+
+  let activeRequestId = 0;
+  const runPreview = async () => {
+    if (!toggle.checked) {
+      status.textContent = 'Auto preview paused.';
+      status.classList.remove('error');
+      return;
+    }
+
+    const missing = (config.required || []).find((key) => !inputs[key] || !inputs[key].value.trim());
+    if (missing) {
+      status.textContent = `Waiting for ${missing}...`;
+      status.classList.remove('error');
+      return;
+    }
+
+    const reqId = ++activeRequestId;
+    status.textContent = 'Previewing...';
+    status.classList.remove('error');
+    try {
+      const res = await fetch(tool.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(collectPayload(inputs))
+      });
+      const data = await res.json();
+      if (reqId !== activeRequestId) return;
+
+      outputEl.textContent = formatAutoPreviewOutput(tool.id, data);
+      if (data.ok) {
+        status.textContent = 'Preview updated.';
+        status.classList.remove('error');
+      } else {
+        status.textContent = data.error || 'Preview error.';
+        status.classList.add('error');
+      }
+    } catch (err) {
+      if (reqId !== activeRequestId) return;
+      status.textContent = `Preview failed: ${err}`;
+      status.classList.add('error');
+    }
+  };
+
+  const schedulePreview = debounce(runPreview, config.delayMs || 500);
+  Object.entries(inputs).forEach(([key, el]) => {
+    if (key.startsWith('__')) return;
+    const evt = el.tagName === 'SELECT' ? 'change' : 'input';
+    el.addEventListener(evt, schedulePreview);
+  });
+  toggle.addEventListener('change', () => {
+    if (toggle.checked) {
+      runPreview();
+    } else {
+      status.textContent = 'Auto preview paused.';
+      status.classList.remove('error');
+    }
+  });
+
+  runPreview();
+}
+
+function attachPythonLintPreview(tool, inputs, panel) {
+  if (tool.id !== 'python-playground' || !inputs.code_pad) return;
+
+  const controls = document.createElement('div');
+  controls.className = 'live-preview-controls';
+
+  const label = document.createElement('label');
+  label.className = 'live-preview-toggle';
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.checked = true;
+  const labelText = document.createElement('span');
+  labelText.textContent = 'Live lint';
+  label.appendChild(toggle);
+  label.appendChild(labelText);
+
+  const status = document.createElement('span');
+  status.className = 'live-preview-status';
+  status.textContent = 'Live lint is on.';
+
+  controls.appendChild(label);
+  controls.appendChild(status);
+  panel.querySelector('.actions').after(controls);
+
+  let activeLintId = 0;
+  const runLint = async () => {
+    if (!toggle.checked) {
+      status.textContent = 'Live lint paused.';
+      status.classList.remove('error');
+      return;
+    }
+
+    const reqId = ++activeLintId;
+    try {
+      const res = await fetch(tool.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'lint',
+          function_code: inputs.code_pad.value,
+          var1: inputs.var1?.value || '',
+          var2: inputs.var2?.value || '',
+          var3: inputs.var3?.value || ''
+        })
+      });
+      const data = await res.json();
+      if (reqId !== activeLintId) return;
+
+      if (!data.ok) {
+        status.textContent = data.error || 'Lint failed.';
+        status.classList.add('error');
+        return;
+      }
+
+      const lint = data.result || {};
+      const syntax = lint.syntax || {};
+      const var1 = lint.var1 || {};
+      const var2 = lint.var2 || {};
+      const var3 = lint.var3 || {};
+      const message = syntax.valid
+        ? `Python syntax OK | var1:${var1.type || '?'} var2:${var2.type || '?'} var3:${var3.type || '?'}`
+        : `Syntax error line ${syntax.line || '?'}: ${syntax.message || 'invalid syntax'}`;
+      status.textContent = message;
+      status.classList.toggle('error', !syntax.valid);
+    } catch (err) {
+      if (reqId !== activeLintId) return;
+      status.textContent = `Lint failed: ${err}`;
+      status.classList.add('error');
+    }
+  };
+
+  const scheduleLint = debounce(runLint, 350);
+  [inputs.code_pad, inputs.var1, inputs.var2, inputs.var3].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('input', scheduleLint);
+  });
+  toggle.addEventListener('change', () => {
+    if (toggle.checked) runLint();
+    else {
+      status.textContent = 'Live lint paused.';
+      status.classList.remove('error');
+    }
+  });
+
+  runLint();
+}
+
 async function runTool(tool, inputs, outputEl) {
   if (tool.id === 'python-playground') {
     await execPythonPlayground(tool, inputs, outputEl, inputs.__py_command?.value || '', { clearPrompt: true });
@@ -1053,6 +1284,7 @@ function init() {
       panel.querySelector('.actions').appendChild(checkVarsBtn);
       panel.querySelector('.actions').appendChild(resetBtn);
       outputEl.textContent = 'Start Session to load `value`, then use Command Prompt below.';
+      attachPythonLintPreview(tool, inputs, panel);
     }
     if (tool.id === 'jinja2') {
       const fmtSelect = inputs.variables_format;
@@ -1190,6 +1422,7 @@ function init() {
 
       panel.querySelector('.grid').after(createRegexCheatsheet());
     }
+    attachAutoPreview(tool, inputs, outputEl, panel);
     if (tool.id !== 'python-playground') {
       runBtn.addEventListener('click', () => runTool(tool, inputs, outputEl));
     }
