@@ -519,6 +519,18 @@ button.run.ghost {
   min-height: 280px;
 }
 
+.panel[data-panel="convert"] .grid {
+  grid-template-columns: 1fr 1fr;
+}
+
+.panel[data-panel="convert"] .field[data-key="content"] {
+  grid-column: span 2;
+}
+
+.panel[data-panel="convert"] .field[data-key="content"] textarea {
+  min-height: 280px;
+}
+
 .regex-pattern-editor {
   position: relative;
   display: grid;
@@ -836,6 +848,14 @@ button.run.ghost {
   }
 
   .panel[data-panel="data-model"] .field[data-key="sample_data"] {
+    grid-column: span 1;
+  }
+
+  .panel[data-panel="convert"] .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel[data-panel="convert"] .field[data-key="content"] {
     grid-column: span 1;
   }
 
