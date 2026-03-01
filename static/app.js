@@ -827,7 +827,8 @@ const autoPreviewConfigs = {
   'json-schema': { delayMs: 650, required: ['schema', 'data'] },
   jinja2: { delayMs: 700, required: ['template'] },
   textfsm: { delayMs: 900, required: ['template', 'text'] },
-  ttp: { delayMs: 900, required: ['template', 'data'] }
+  ttp: { delayMs: 900, required: ['template', 'data'] },
+  regex: { delayMs: 220, required: ['pattern'] }
 };
 
 function formatAutoPreviewOutput(toolId, data) {
@@ -859,6 +860,12 @@ function formatAutoPreviewOutput(toolId, data) {
   }
   if (toolId === 'ttp') {
     return pretty(data.result);
+  }
+  if (toolId === 'regex') {
+    return pretty({
+      count: data.count,
+      matches: data.matches || []
+    });
   }
   return pretty(data);
 }
