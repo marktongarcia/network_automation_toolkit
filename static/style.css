@@ -393,6 +393,79 @@ button.run.ghost {
   border: 1px solid var(--terminal-input-border);
 }
 
+.live-code-editor {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  overflow: hidden;
+}
+
+.live-code-highlight,
+.live-code-input {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  line-height: 1.45;
+  white-space: pre;
+  overflow: auto;
+}
+
+.live-code-highlight {
+  min-height: 120px;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.live-code-input {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  resize: vertical;
+}
+
+.live-code-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.syn-keyword {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.syn-string {
+  color: #b45309;
+}
+
+.syn-number {
+  color: #2563eb;
+}
+
+.syn-operator {
+  color: #7c3aed;
+  font-weight: 600;
+}
+
+.syn-name {
+  color: #15803d;
+}
+
+.syn-variable {
+  color: #0c4a6e;
+  font-weight: 700;
+}
+
+.syn-comment {
+  color: #64748b;
+  font-style: italic;
+}
+
 .panel[data-panel="regex"] .grid {
   grid-template-columns: 1fr;
 }
@@ -503,6 +576,10 @@ button.run.ghost {
   min-width: 760px;
   border-collapse: collapse;
   font-size: 0.89rem;
+}
+
+.tool-cheatsheet-table {
+  min-width: 820px;
 }
 
 .regex-cheatsheet-table th,

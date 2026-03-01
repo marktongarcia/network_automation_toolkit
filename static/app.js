@@ -7,7 +7,7 @@ const tools = [
     chooser: 'Best for: stable line-oriented CLI formats. Alternative: use TTP when output shape varies a lot.',
     endpoint: '/api/textfsm',
     fields: [
-      { key: 'template', label: 'Template', type: 'textarea', value: 'Value INTERFACE (\\S+)\nValue IP_ADDRESS (\\S+)\nValue STATUS (up|down|administratively down)\nValue PROTOCOL (up|down)\n\nStart\n  ^${INTERFACE}\\s+${IP_ADDRESS}\\s+YES\\s+\\S+\\s+${STATUS}\\s+${PROTOCOL} -> Record' },
+      { key: 'template', label: 'Template', type: 'code-editor', mode: 'textfsm', rows: 10, value: 'Value INTERFACE (\\S+)\nValue IP_ADDRESS (\\S+)\nValue STATUS (up|down|administratively down)\nValue PROTOCOL (up|down)\n\nStart\n  ^${INTERFACE}\\s+${IP_ADDRESS}\\s+YES\\s+\\S+\\s+${STATUS}\\s+${PROTOCOL} -> Record' },
       { key: 'text', label: 'Raw Text', type: 'textarea', value: 'Interface              IP-Address      OK? Method Status                Protocol\nGigabitEthernet0/0     10.10.10.1      YES manual up                    up\nGigabitEthernet0/1     172.16.20.1     YES manual up                    up\nGigabitEthernet0/2     unassigned      YES unset  administratively down down\nLoopback0              192.168.255.1   YES manual up                    up' }
     ]
   },
@@ -20,7 +20,7 @@ const tools = [
     endpoint: '/api/xpath',
     fields: [
       { key: 'xml', label: 'XML', type: 'textarea', value: '<rpc-reply>\n  <data>\n    <interfaces>\n      <interface>\n        <name>GigabitEthernet0/0</name>\n        <enabled>true</enabled>\n        <ipv4>\n          <address>\n            <ip>10.10.10.1</ip>\n            <prefix-length>30</prefix-length>\n          </address>\n        </ipv4>\n      </interface>\n      <interface>\n        <name>Loopback0</name>\n        <enabled>true</enabled>\n        <ipv4>\n          <address>\n            <ip>192.168.255.1</ip>\n            <prefix-length>32</prefix-length>\n          </address>\n        </ipv4>\n      </interface>\n    </interfaces>\n  </data>\n</rpc-reply>' },
-      { key: 'xpath', label: 'XPath', type: 'input', value: '//interface[enabled=\"true\"]/name/text()' }
+      { key: 'xpath', label: 'XPath', type: 'code-editor', mode: 'xpath', rows: 3, value: '//interface[enabled=\"true\"]/name/text()' }
     ]
   },
   {
@@ -31,7 +31,7 @@ const tools = [
     chooser: 'Best for: validating structure and required fields. Alternative: use Python Playground for custom business-rule checks.',
     endpoint: '/api/json-schema',
     fields: [
-      { key: 'schema', label: 'Schema (JSON)', type: 'textarea', value: '{\n  "$schema": "https://json-schema.org/draft/2020-12/schema",\n  "type": "object",\n  "required": ["hostname", "mgmt_ip", "role", "interfaces"],\n  "properties": {\n    "hostname": {"type": "string", "minLength": 3},\n    "mgmt_ip": {"type": "string", "pattern": "^\\\\d+\\\\.\\\\d+\\\\.\\\\d+\\\\.\\\\d+$"},\n    "role": {"type": "string", "enum": ["edge", "core", "access"]},\n    "interfaces": {\n      "type": "array",\n      "minItems": 1,\n      "items": {\n        "type": "object",\n        "required": ["name", "enabled"],\n        "properties": {\n          "name": {"type": "string"},\n          "enabled": {"type": "boolean"},\n          "description": {"type": "string"}\n        }\n      }\n    }\n  }\n}' },
+      { key: 'schema', label: 'Schema (JSON)', type: 'code-editor', mode: 'json-schema', rows: 16, value: '{\n  "$schema": "https://json-schema.org/draft/2020-12/schema",\n  "type": "object",\n  "required": ["hostname", "mgmt_ip", "role", "interfaces"],\n  "properties": {\n    "hostname": {"type": "string", "minLength": 3},\n    "mgmt_ip": {"type": "string", "pattern": "^\\\\d+\\\\.\\\\d+\\\\.\\\\d+\\\\.\\\\d+$"},\n    "role": {"type": "string", "enum": ["edge", "core", "access"]},\n    "interfaces": {\n      "type": "array",\n      "minItems": 1,\n      "items": {\n        "type": "object",\n        "required": ["name", "enabled"],\n        "properties": {\n          "name": {"type": "string"},\n          "enabled": {"type": "boolean"},\n          "description": {"type": "string"}\n        }\n      }\n    }\n  }\n}' },
       { key: 'data', label: 'Data (JSON)', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "mgmt_ip": "10.0.0.10",\n  "role": "edge",\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "enabled": true,\n      "description": "WAN_TO_ISP"\n    },\n    {\n      "name": "GigabitEthernet0/1",\n      "enabled": true,\n      "description": "LAN_USERS"\n    }\n  ]\n}' }
     ]
   },
@@ -44,7 +44,7 @@ const tools = [
     endpoint: '/api/jmespath',
     fields: [
       { key: 'data', label: 'Data (JSON)', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "interfaces": [\n    {"name": "GigabitEthernet0/0", "enabled": true, "counters": {"in_errors": 0, "out_errors": 2}},\n    {"name": "GigabitEthernet0/1", "enabled": true, "counters": {"in_errors": 4, "out_errors": 1}},\n    {"name": "GigabitEthernet0/2", "enabled": false, "counters": {"in_errors": 0, "out_errors": 0}}\n  ]\n}' },
-      { key: 'expression', label: 'JMESPath', type: 'input', value: 'interfaces[?enabled && counters.in_errors > `0`].{name:name,in_errors:counters.in_errors}' }
+      { key: 'expression', label: 'JMESPath', type: 'code-editor', mode: 'jmespath', rows: 3, value: 'interfaces[?enabled && counters.in_errors > `0`].{name:name,in_errors:counters.in_errors}' }
     ]
   },
   {
@@ -83,7 +83,7 @@ const tools = [
     chooser: 'Best for: deterministic text generation from structured vars. Alternative: Python Playground when output is non-template logic.',
     endpoint: '/api/jinja2',
     fields: [
-      { key: 'template', label: 'Template', type: 'textarea', value: 'hostname {{ hostname }}\n!\ninterface Loopback0\n ip address {{ loopback.ip }} {{ loopback.mask }}\n description Router-ID\n!\n{% for intf in interfaces %}interface {{ intf.name }}\n description {{ intf.description }}\n ip address {{ intf.ip }} {{ intf.mask }}\n{% if intf.shutdown %} shutdown\n{% else %} no shutdown\n{% endif %}!\n{% endfor %}' },
+      { key: 'template', label: 'Template', type: 'code-editor', mode: 'jinja2', rows: 14, value: 'hostname {{ hostname }}\n!\ninterface Loopback0\n ip address {{ loopback.ip }} {{ loopback.mask }}\n description Router-ID\n!\n{% for intf in interfaces %}interface {{ intf.name }}\n description {{ intf.description }}\n ip address {{ intf.ip }} {{ intf.mask }}\n{% if intf.shutdown %} shutdown\n{% else %} no shutdown\n{% endif %}!\n{% endfor %}' },
       { key: 'variables_format', label: 'Variables Format', type: 'select', options: ['json', 'yaml'], value: 'json' },
       { key: 'variables', label: 'Variables', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "loopback": {\n    "ip": "192.168.255.1",\n    "mask": "255.255.255.255"\n  },\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "description": "WAN_TO_ISP",\n      "ip": "10.10.10.1",\n      "mask": "255.255.255.252",\n      "shutdown": false\n    },\n    {\n      "name": "GigabitEthernet0/1",\n      "description": "LAN_USERS",\n      "ip": "172.16.20.1",\n      "mask": "255.255.255.0",\n      "shutdown": false\n    }\n  ]\n}' }
     ]
@@ -96,7 +96,7 @@ const tools = [
     chooser: 'Best for: hierarchical or less rigid CLI output. Alternative: TextFSM for highly regular command output.',
     endpoint: '/api/ttp',
     fields: [
-      { key: 'template', label: 'TTP Template', type: 'textarea', value: '<group name=\"interfaces\">\ninterface {{ name }}\n description {{ description | ORPHRASE }}\n ip address {{ ip }} {{ mask }}\n {{ state | ORPHRASE }}\n!</group>' },
+      { key: 'template', label: 'TTP Template', type: 'code-editor', mode: 'ttp', rows: 10, value: '<group name=\"interfaces\">\ninterface {{ name }}\n description {{ description | ORPHRASE }}\n ip address {{ ip }} {{ mask }}\n {{ state | ORPHRASE }}\n!</group>' },
       { key: 'data', label: 'Data', type: 'textarea', value: 'interface GigabitEthernet0/0\n description WAN_TO_ISP\n ip address 10.10.10.1 255.255.255.252\n no shutdown\n!\ninterface GigabitEthernet0/1\n description LAN_USERS\n ip address 172.16.20.1 255.255.255.0\n no shutdown\n!\ninterface GigabitEthernet0/2\n description UNUSED_PORT\n ip address 0.0.0.0 0.0.0.0\n shutdown\n!' }
     ]
   },
@@ -111,7 +111,7 @@ const tools = [
       { key: 'var1', label: 'var1', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "interfaces": [\n    {"name": "GigabitEthernet0/0", "in_util": 72.5},\n    {"name": "GigabitEthernet0/1", "in_util": 28.0},\n    {"name": "GigabitEthernet0/2", "in_util": 4.2}\n  ]\n}' },
       { key: 'var2', label: 'var2', type: 'textarea', value: '{"threshold": 50, "ticket_prefix": "NOC"}' },
       { key: 'var3', label: 'var3', type: 'textarea', value: '["GigabitEthernet0/0", "GigabitEthernet0/1"]' },
-      { key: 'code_pad', label: 'Code Pad (multiline)', type: 'textarea', value: 'def hot_interfaces():\n    t = var2["threshold"]\n    return [i["name"] for i in value["interfaces"] if i["in_util"] > t]\n\nprint("Hot interfaces:", hot_interfaces())' },
+      { key: 'code_pad', label: 'Code Pad (multiline)', type: 'code-editor', mode: 'python', rows: 12, value: 'def hot_interfaces():\n    t = var2["threshold"]\n    return [i["name"] for i in value["interfaces"] if i["in_util"] > t]\n\nprint("Hot interfaces:", hot_interfaces())' },
       { key: 'note', label: 'Note', type: 'note', value: 'Interactive mode: start a session, load multiline code from Code Pad, then run quick commands in prompt below. value is an alias for var1. var2 and var3 are also available.' }
     ]
   },
@@ -453,6 +453,262 @@ function buildRegexTextHighlights(text, rawPattern) {
   };
 }
 
+const toolCheatsheetRows = {
+  xpath: [
+    ['Path Basics', '//node', 'Search anywhere in document', '//interface/name'],
+    ['Path Basics', '/root/node', 'Absolute path from root', '/rpc-reply/data/interfaces'],
+    ['Filters', "[name='Lo0']", 'Predicate filter by value', "//interface[name='Loopback0']"],
+    ['Filters', '[@attr="x"]', 'Filter by attribute', '//entry[@name="mgmt"]'],
+    ['Functions', 'text()', 'Extract text node', '//name/text()'],
+    ['Functions', 'contains(a,b)', 'Substring check', "//description[contains(.,'WAN')]"],
+    ['Functions', 'starts-with(a,b)', 'Prefix match', "//name[starts-with(.,'Gig')]"],
+    ['Indexes', '[1]', 'First element (XPath is 1-based)', '//interface[1]']
+  ],
+  jmespath: [
+    ['Selections', 'interfaces[*].name', 'Project list field', 'interfaces[*].name'],
+    ['Filters', '[?enabled==`true`]', 'Filter array values', 'interfaces[?enabled==`true`]'],
+    ['Objects', '{n:name,e:enabled}', 'Create mapped object', 'interfaces[].{n:name,e:enabled}'],
+    ['Pipe', 'expr | expr', 'Chain expressions', 'interfaces | length(@)'],
+    ['Functions', 'length(@)', 'Count items/characters', 'length(interfaces)'],
+    ['Functions', 'sort_by(arr,&key)', 'Sort by key', 'sort_by(interfaces,&name)'],
+    ['Contains', 'contains(arr,x)', 'Membership test', "contains(tags, 'edge')"],
+    ['Literals', '`123` / `true`', 'Literal numeric/bool', 'errors > `0`']
+  ],
+  'json-schema': [
+    ['Core', '"type"', 'Defines allowed type', '"type": "object"'],
+    ['Core', '"properties"', 'Defines object keys', '"properties": { ... }'],
+    ['Core', '"required"', 'Mandatory fields', '"required": ["hostname"]'],
+    ['Arrays', '"items"', 'Schema for each array item', '"items": { "type":"object" }'],
+    ['Validation', '"enum"', 'Allowed values only', '"enum": ["edge","core"]'],
+    ['Validation', '"pattern"', 'Regex validation for strings', '"pattern":"^\\\\d+\\\\.\\\\d+..."'],
+    ['Validation', '"minLength"/"maxLength"', 'String size constraints', '"minLength": 3'],
+    ['Control', '"additionalProperties"', 'Allow or block unknown keys', '"additionalProperties": false']
+  ],
+  textfsm: [
+    ['Declarations', 'Value NAME (regex)', 'Capture field declaration', 'Value IFACE (\\S+)'],
+    ['States', 'Start', 'Initial parsing state', 'Start'],
+    ['Records', '-> Record', 'Emit parsed row', '^... -> Record'],
+    ['Variables', '${NAME}', 'Reference captured value', '^${IFACE}\\s+${IP}'],
+    ['Patterns', '^', 'Start-of-line anchor', '^Interface\\s+'],
+    ['Actions', '-> Continue', 'Stay in current state', '^\\s+ -> Continue'],
+    ['Actions', '-> Clear', 'Clear values before continue', '^! -> Clear'],
+    ['Flow', '-> StateName', 'Transition to another state', '^foo -> NextState']
+  ],
+  ttp: [
+    ['Groups', '<group name="x">', 'Define capture section', '<group name="interfaces">'],
+    ['Variables', '{{ var }}', 'Capture value token', 'interface {{ name }}'],
+    ['Filters', '{{ desc | ORPHRASE }}', 'Apply built-in extractor', '{{ ip | PHRASE }}'],
+    ['Hierarchy', '<group name="a.b">', 'Nested output keys', '<group name="ifaces.core">'],
+    ['Literals', 'plain text', 'Must match text literally', 'ip address'],
+    ['End', '</group>', 'Close group section', '</group>']
+  ],
+  jinja2: [
+    ['Output', '{{ var }}', 'Render variable value', '{{ hostname }}'],
+    ['Control', '{% for x in xs %}', 'Loop block', '{% for i in interfaces %}'],
+    ['Control', '{% if cond %}', 'Conditional block', '{% if intf.shutdown %}'],
+    ['Filters', '{{ v|default("x") }}', 'Apply filter to value', '{{ desc|upper }}'],
+    ['Whitespace', '{%- ... -%}', 'Trim surrounding whitespace', '{%- for x in y -%}'],
+    ['Access', 'obj.key / arr[0]', 'Dot/index navigation', '{{ loopback.ip }}']
+  ],
+  'python-playground': [
+    ['Flow', 'for / if / def', 'Core control structures', 'for i in value["interfaces"]'],
+    ['Collections', 'list/dict comprehensions', 'Compact transforms', '[i["name"] for i in ...]'],
+    ['Debug', 'print(...)', 'Inspect intermediate values', 'print(type(value))'],
+    ['Safety', '.get("key")', 'Avoid KeyError on optional keys', 'value.get("hostname")'],
+    ['Sorting', 'sorted(data,key=...)', 'Deterministic ordering', 'sorted(intfs, key=lambda x: x["name"])'],
+    ['JSON', 'json.dumps(x,indent=2)', 'Pretty print objects', 'json.dumps(value, indent=2)']
+  ]
+};
+
+function highlightByRules(text, rules) {
+  let i = 0;
+  let html = '';
+  while (i < text.length) {
+    const rest = text.slice(i);
+    let found = false;
+    for (const rule of rules) {
+      const match = rest.match(rule.regex);
+      if (!match) continue;
+      html += `<span class="${rule.className}">${escapeHtml(match[0])}</span>`;
+      i += match[0].length;
+      found = true;
+      break;
+    }
+    if (!found) {
+      html += escapeHtml(text[i]);
+      i += 1;
+    }
+  }
+  return html;
+}
+
+function highlightJsonLike(text, schemaMode = false) {
+  const schemaKeys = new Set(['$schema', 'type', 'properties', 'required', 'items', 'enum', 'pattern', 'additionalProperties', 'minLength', 'maxLength', 'minimum', 'maximum']);
+  let i = 0;
+  let html = '';
+  while (i < text.length) {
+    const rest = text.slice(i);
+    const stringMatch = rest.match(/^"(?:\\.|[^"\\])*"/);
+    if (stringMatch) {
+      const token = stringMatch[0];
+      let className = 'syn-string';
+      const keyName = token.slice(1, -1);
+      const after = text.slice(i + token.length).match(/^\s*:/);
+      if (schemaMode && after && schemaKeys.has(keyName)) className = 'syn-keyword';
+      html += `<span class="${className}">${escapeHtml(token)}</span>`;
+      i += token.length;
+      continue;
+    }
+    const numberMatch = rest.match(/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+    if (numberMatch) {
+      html += `<span class="syn-number">${escapeHtml(numberMatch[0])}</span>`;
+      i += numberMatch[0].length;
+      continue;
+    }
+    const boolNull = rest.match(/^(true|false|null)\b/);
+    if (boolNull) {
+      html += `<span class="syn-keyword">${boolNull[1]}</span>`;
+      i += boolNull[1].length;
+      continue;
+    }
+    const punct = rest.match(/^[\[\]{}:,]/);
+    if (punct) {
+      html += `<span class="syn-operator">${punct[0]}</span>`;
+      i += 1;
+      continue;
+    }
+    html += escapeHtml(text[i]);
+    i += 1;
+  }
+  return html;
+}
+
+function getSyntaxHighlightHtml(mode, text) {
+  if (mode === 'regex') return highlightRegexPattern(text);
+  if (mode === 'json-schema') return highlightJsonLike(text, true);
+  if (mode === 'json') return highlightJsonLike(text, false);
+
+  const rulesByMode = {
+    xpath: [
+      { regex: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/, className: 'syn-string' },
+      { regex: /^\/{1,2}|^\.\.|^::|^\*|^@|^\[|^\]|^\(|^\)|^\|/, className: 'syn-operator' },
+      { regex: /^(?:text|contains|starts-with|name|normalize-space|count)(?=\()/, className: 'syn-keyword' },
+      { regex: /^-?\d+(?:\.\d+)?/, className: 'syn-number' },
+      { regex: /^[a-zA-Z_][\w:-]*/, className: 'syn-name' }
+    ],
+    jmespath: [
+      { regex: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'|^`[^`]*`/, className: 'syn-string' },
+      { regex: /^(?:\[\?\]|\[\*\]|\[\]|\{|\}|\[|\]|\(|\)|\|\||\||&&|==|!=|>=|<=|>|<|:|,|\.)/, className: 'syn-operator' },
+      { regex: /^(?:length|sort_by|contains|starts_with|to_string|to_number)(?=\()/, className: 'syn-keyword' },
+      { regex: /^-?\d+(?:\.\d+)?/, className: 'syn-number' },
+      { regex: /^[a-zA-Z_][\w-]*/, className: 'syn-name' }
+    ],
+    textfsm: [
+      { regex: /^\$\{[A-Z0-9_]+\}/, className: 'syn-variable' },
+      { regex: /^(?:Value|Start|End|EOF|Record|Clear|Continue)\b/, className: 'syn-keyword' },
+      { regex: /^->\s*\w+/, className: 'syn-keyword' },
+      { regex: /^(?:\^|\$|\\[wsdS]|[(){}|+*?])/, className: 'syn-operator' },
+      { regex: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/, className: 'syn-string' },
+      { regex: /^[A-Z_][A-Z0-9_]*/, className: 'syn-name' }
+    ],
+    ttp: [
+      { regex: /^<\/?group(?:\s+[^>]*)?>/, className: 'syn-keyword' },
+      { regex: /^\{\{[^}]+\}\}/, className: 'syn-variable' },
+      { regex: /^\|/, className: 'syn-operator' },
+      { regex: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/, className: 'syn-string' }
+    ],
+    jinja2: [
+      { regex: /^\{\%[\s\S]*?\%\}/, className: 'syn-keyword' },
+      { regex: /^\{\{[\s\S]*?\}\}/, className: 'syn-variable' },
+      { regex: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/, className: 'syn-string' },
+      { regex: /^\b(?:for|in|if|else|elif|endif|endfor|set|block|extends|include|macro)\b/, className: 'syn-keyword' },
+      { regex: /^\|/, className: 'syn-operator' }
+    ],
+    python: [
+      { regex: /^#.*$/, className: 'syn-comment' },
+      { regex: /^"""[\s\S]*?"""|^'''[\s\S]*?'''/, className: 'syn-string' },
+      { regex: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/, className: 'syn-string' },
+      { regex: /^\b(?:def|for|if|elif|else|return|import|from|in|not|and|or|while|try|except|with|as|lambda|True|False|None|class)\b/, className: 'syn-keyword' },
+      { regex: /^-?\d+(?:\.\d+)?/, className: 'syn-number' },
+      { regex: /^(?:==|!=|>=|<=|\+|-|\*|\/|%|=|:|\(|\)|\[|\]|\{|\}|,|\.)/, className: 'syn-operator' }
+    ]
+  };
+  const rules = rulesByMode[mode];
+  return rules ? highlightByRules(text, rules) : escapeHtml(text);
+}
+
+function createCodeEditor(field, inputs) {
+  const editor = document.createElement('div');
+  editor.className = 'live-code-editor';
+  editor.dataset.mode = field.mode || 'plain';
+  const rows = field.rows || 6;
+  const minHeightPx = Math.max(rows * 22, 120);
+  editor.style.minHeight = `${minHeightPx}px`;
+
+  const highlightLayer = document.createElement('pre');
+  highlightLayer.className = 'live-code-highlight';
+  highlightLayer.setAttribute('aria-hidden', 'true');
+
+  const input = document.createElement('textarea');
+  input.className = 'live-code-input';
+  input.value = field.value || '';
+  input.rows = rows;
+  input.spellcheck = false;
+  highlightLayer.style.minHeight = `${minHeightPx}px`;
+
+  const syncHighlight = () => {
+    highlightLayer.innerHTML = getSyntaxHighlightHtml(field.mode || 'plain', input.value);
+    if (!input.value.endsWith('\n')) {
+      highlightLayer.innerHTML += '\n';
+    }
+  };
+
+  input.addEventListener('input', syncHighlight);
+  input.addEventListener('scroll', () => {
+    highlightLayer.scrollTop = input.scrollTop;
+    highlightLayer.scrollLeft = input.scrollLeft;
+  });
+  syncHighlight();
+
+  editor.appendChild(highlightLayer);
+  editor.appendChild(input);
+  inputs[field.key] = input;
+  return editor;
+}
+
+function createToolCheatsheet(toolId) {
+  const rows = toolCheatsheetRows[toolId];
+  if (!rows) return null;
+
+  const wrap = document.createElement('details');
+  wrap.className = 'regex-cheatsheet';
+
+  const summary = document.createElement('summary');
+  summary.textContent = 'Quick help / cheatsheet';
+  wrap.appendChild(summary);
+
+  const content = document.createElement('div');
+  content.className = 'regex-cheatsheet-content';
+  const body = rows.map((r) => `<tr><td>${escapeHtml(r[0])}</td><td><code>${escapeHtml(r[1])}</code></td><td>${escapeHtml(r[2])}</td><td><code>${escapeHtml(r[3])}</code></td></tr>`).join('');
+  content.innerHTML = `
+    <div class="regex-cheatsheet-table-wrap">
+      <table class="regex-cheatsheet-table tool-cheatsheet-table">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>Syntax</th>
+            <th>Meaning</th>
+            <th>Example</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
+  wrap.appendChild(content);
+  return wrap;
+}
+
 function initTheme() {
   if (!themeSelect) return;
 
@@ -493,6 +749,9 @@ function createField(field, inputs) {
   if (field.type === 'textarea') {
     input = document.createElement('textarea');
     input.value = field.value || '';
+  } else if (field.type === 'code-editor') {
+    wrap.appendChild(createCodeEditor(field, inputs));
+    return wrap;
   } else if (field.type === 'regex-editor') {
     const editor = document.createElement('div');
     editor.className = 'regex-pattern-editor';
@@ -879,6 +1138,12 @@ function init() {
       validateFmt.addEventListener('change', async () => {
         await convertFieldByFormat(validateFmt, validateInput, dataModelFallback.validate);
       });
+    }
+    if (toolCheatsheetRows[tool.id]) {
+      const cheatsheet = createToolCheatsheet(tool.id);
+      if (cheatsheet) {
+        panel.querySelector('.grid').after(cheatsheet);
+      }
     }
     if (tool.id === 'regex') {
       const patternInput = inputs.pattern;
