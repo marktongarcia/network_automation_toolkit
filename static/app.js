@@ -123,7 +123,7 @@ const tools = [
     chooser: 'Best for: token extraction from strings. Alternative: TextFSM/TTP when you need complete record parsing.',
     endpoint: '/api/regex',
     fields: [
-      { key: 'pattern', label: 'Pattern', type: 'input', value: '(?ms)^interface\\s+(\\S+)\\n\\s+ip address\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\n\\s+description\\s+(.+?)\\n!' },
+      { key: 'pattern', label: 'Pattern', type: 'regex-editor', value: '(?ms)^interface\\s+(\\S+)\\n\\s+ip address\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\n\\s+description\\s+(.+?)\\n!' },
       { key: 'text', label: 'Text', type: 'textarea', value: 'interface GigabitEthernet0/0\n ip address 10.10.10.1 255.255.255.0\n description WAN_LINK_TO_ISP\n!\ninterface GigabitEthernet0/1\n ip address 172.16.20.1 255.255.255.0\n description LAN_USERS_VLAN20\n!\ninterface Loopback0\n ip address 192.168.255.1 255.255.255.255\n description ROUTER_ID\n!' }
     ]
   },
@@ -228,6 +228,231 @@ function pretty(value) {
   return JSON.stringify(value, null, 2);
 }
 
+function escapeHtml(value) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function highlightRegexPattern(pattern) {
+  const lookaroundPrefixes = ['(?<=', '(?<!', '(?=', '(?!', '(?:', '(?P<', '(?<'];
+  let i = 0;
+  let html = '';
+
+  while (i < pattern.length) {
+    const char = pattern[i];
+    const rest = pattern.slice(i);
+
+    if (char === '\\') {
+      const token = pattern.slice(i, Math.min(i + 2, pattern.length));
+      html += `<span class="rgx-esc">${escapeHtml(token)}</span>`;
+      i += token.length;
+      continue;
+    }
+
+    if (char === '[') {
+      let j = i + 1;
+      while (j < pattern.length) {
+        if (pattern[j] === '\\') {
+          j += 2;
+          continue;
+        }
+        if (pattern[j] === ']') {
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      const token = pattern.slice(i, j);
+      html += `<span class="rgx-class">${escapeHtml(token)}</span>`;
+      i = j;
+      continue;
+    }
+
+    const quantifier = rest.match(/^\{\d+(,\d*)?\}\??/);
+    if (quantifier) {
+      html += `<span class="rgx-quant">${escapeHtml(quantifier[0])}</span>`;
+      i += quantifier[0].length;
+      continue;
+    }
+
+    if (char === '(') {
+      const prefix = lookaroundPrefixes.find((candidate) => rest.startsWith(candidate));
+      if (prefix) {
+        html += `<span class="rgx-group">${escapeHtml(prefix)}</span>`;
+        i += prefix.length;
+      } else {
+        html += '<span class="rgx-group">(</span>';
+        i += 1;
+      }
+      continue;
+    }
+
+    if (char === ')') {
+      html += '<span class="rgx-group">)</span>';
+      i += 1;
+      continue;
+    }
+
+    if (char === '^' || char === '$') {
+      html += `<span class="rgx-anchor">${char}</span>`;
+      i += 1;
+      continue;
+    }
+
+    if (char === '*' || char === '+' || char === '?') {
+      html += `<span class="rgx-quant">${char}</span>`;
+      i += 1;
+      continue;
+    }
+
+    if (char === '|') {
+      html += '<span class="rgx-op">|</span>';
+      i += 1;
+      continue;
+    }
+
+    if (char === '.') {
+      html += '<span class="rgx-op">.</span>';
+      i += 1;
+      continue;
+    }
+
+    html += escapeHtml(char);
+    i += 1;
+  }
+
+  return html;
+}
+
+function createRegexCheatsheet() {
+  const wrap = document.createElement('details');
+  wrap.className = 'regex-cheatsheet';
+
+  const summary = document.createElement('summary');
+  summary.textContent = 'Regex quick help / cheatsheet';
+  wrap.appendChild(summary);
+
+  const content = document.createElement('div');
+  content.className = 'regex-cheatsheet-content';
+  content.innerHTML = `
+    <div class="regex-cheatsheet-table-wrap">
+      <table class="regex-cheatsheet-table">
+        <thead>
+          <tr>
+            <th>Pattern</th>
+            <th>Meaning</th>
+            <th>Example</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="section-row"><td colspan="3">Character Classes</td></tr>
+          <tr><td><code>\\d</code></td><td>Digit</td><td><code>VLAN\\d+</code></td></tr>
+          <tr><td><code>\\w</code></td><td>Word character (a-z, A-Z, 0-9, _)</td><td><code>\\w+_ID</code></td></tr>
+          <tr><td><code>\\s</code></td><td>Whitespace</td><td><code>ip\\s+address</code></td></tr>
+          <tr><td><code>[A-Z0-9_]</code></td><td>Custom class</td><td><code>HOST_[A-Z0-9_]+</code></td></tr>
+          <tr><td><code>[^ ]</code></td><td>Negated class (not a space)</td><td><code>[^\\s]+</code></td></tr>
+
+          <tr class="section-row"><td colspan="3">Anchors and Boundaries</td></tr>
+          <tr><td><code>^</code></td><td>Start of line</td><td><code>^interface</code></td></tr>
+          <tr><td><code>$</code></td><td>End of line</td><td><code>up$</code></td></tr>
+          <tr><td><code>\\b</code></td><td>Word boundary</td><td><code>\\bip\\b</code></td></tr>
+
+          <tr class="section-row"><td colspan="3">Quantifiers</td></tr>
+          <tr><td><code>*</code></td><td>0 or more</td><td><code>\\d*</code></td></tr>
+          <tr><td><code>+</code></td><td>1 or more</td><td><code>\\d+</code></td></tr>
+          <tr><td><code>?</code></td><td>0 or 1 (or lazy modifier)</td><td><code>\\w+?</code></td></tr>
+          <tr><td><code>{m,n}</code></td><td>Between m and n</td><td><code>\\d{1,3}</code></td></tr>
+
+          <tr class="section-row"><td colspan="3">Groups and Logic</td></tr>
+          <tr><td><code>(...)</code></td><td>Capturing group</td><td><code>(GigabitEthernet\\d+/\\d+)</code></td></tr>
+          <tr><td><code>(?:...)</code></td><td>Non-capturing group</td><td><code>(?:up|down)</code></td></tr>
+          <tr><td><code>|</code></td><td>OR alternation</td><td><code>up|down</code></td></tr>
+          <tr><td><code>.</code></td><td>Any character</td><td><code>desc.+</code></td></tr>
+
+          <tr class="section-row"><td colspan="3">Lookarounds and Flags</td></tr>
+          <tr><td><code>(?=...)</code></td><td>Positive lookahead</td><td><code>\\d+(?=Mbps)</code></td></tr>
+          <tr><td><code>(?!...)</code></td><td>Negative lookahead</td><td><code>interface(?!\\s+Loopback)</code></td></tr>
+          <tr><td><code>(?&lt;=...)</code></td><td>Positive lookbehind</td><td><code>(?&lt;=ip\\saddress\\s)\\S+</code></td></tr>
+          <tr><td><code>(?&lt;!...)</code></td><td>Negative lookbehind</td><td><code>(?&lt;!admin\\s)down</code></td></tr>
+          <tr><td><code>(?i) (?m) (?s)</code></td><td>Ignore case, multiline, dotall</td><td><code>(?mi)^interface</code></td></tr>
+          <tr><td><code>\\.</code> <code>\\(</code></td><td>Escape special chars literally</td><td><code>10\\.10\\.10\\.1</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="regex-tip">Tip: for network parsing, anchor blocks with <code>^interface</code> and make inner matches lazy with <code>.+?</code> when boundaries repeat.</p>
+  `;
+  wrap.appendChild(content);
+  return wrap;
+}
+
+function parseInlineRegexFlags(pattern) {
+  const inline = pattern.match(/^\(\?([a-zA-Z]+)\)/);
+  if (!inline) {
+    return { source: pattern, flags: '' };
+  }
+
+  const supported = new Set(['i', 'm', 's', 'u', 'y', 'g']);
+  const parsedFlags = Array.from(inline[1]).filter((flag) => supported.has(flag)).join('');
+  return {
+    source: pattern.slice(inline[0].length),
+    flags: parsedFlags
+  };
+}
+
+function buildRegexTextHighlights(text, rawPattern) {
+  if (!rawPattern.trim()) {
+    return { ok: true, html: escapeHtml(text), status: 'Enter a pattern to preview matches.' };
+  }
+
+  const parsed = parseInlineRegexFlags(rawPattern);
+  const flags = Array.from(new Set(`${parsed.flags}g`)).join('');
+  let regex;
+
+  try {
+    regex = new RegExp(parsed.source, flags);
+  } catch (err) {
+    return { ok: false, html: escapeHtml(text), status: `Pattern error: ${err.message}` };
+  }
+
+  const segments = [];
+  const matches = [];
+  let nextStart = 0;
+  let hit;
+  while ((hit = regex.exec(text)) !== null) {
+    const start = hit.index;
+    const end = start + hit[0].length;
+    if (end < start) {
+      break;
+    }
+    matches.push({ start, end });
+    if (hit[0] === '') {
+      regex.lastIndex += 1;
+      if (regex.lastIndex > text.length) break;
+    }
+  }
+
+  if (matches.length === 0) {
+    return { ok: true, html: escapeHtml(text), status: 'No matches yet.' };
+  }
+
+  matches.forEach((range, idx) => {
+    segments.push(escapeHtml(text.slice(nextStart, range.start)));
+    const matchText = escapeHtml(text.slice(range.start, range.end));
+    const className = idx % 2 === 0 ? 'rgx-hit rgx-hit-a' : 'rgx-hit rgx-hit-b';
+    segments.push(`<span class="${className}">${matchText || ' '}</span>`);
+    nextStart = range.end;
+  });
+  segments.push(escapeHtml(text.slice(nextStart)));
+
+  return {
+    ok: true,
+    html: segments.join(''),
+    status: `${matches.length} match${matches.length === 1 ? '' : 'es'} highlighted in real-time.`
+  };
+}
+
 function initTheme() {
   if (!themeSelect) return;
 
@@ -268,6 +493,39 @@ function createField(field, inputs) {
   if (field.type === 'textarea') {
     input = document.createElement('textarea');
     input.value = field.value || '';
+  } else if (field.type === 'regex-editor') {
+    const editor = document.createElement('div');
+    editor.className = 'regex-pattern-editor';
+
+    const highlightLayer = document.createElement('pre');
+    highlightLayer.className = 'regex-highlight';
+    highlightLayer.setAttribute('aria-hidden', 'true');
+
+    input = document.createElement('textarea');
+    input.className = 'regex-pattern-input';
+    input.value = field.value || '';
+    input.spellcheck = false;
+    input.rows = 4;
+
+    const syncHighlight = () => {
+      highlightLayer.innerHTML = highlightRegexPattern(input.value);
+      if (!input.value.endsWith('\n')) {
+        highlightLayer.innerHTML += '\n';
+      }
+    };
+
+    input.addEventListener('input', syncHighlight);
+    input.addEventListener('scroll', () => {
+      highlightLayer.scrollTop = input.scrollTop;
+      highlightLayer.scrollLeft = input.scrollLeft;
+    });
+    syncHighlight();
+
+    editor.appendChild(highlightLayer);
+    editor.appendChild(input);
+    wrap.appendChild(editor);
+    inputs[field.key] = input;
+    return wrap;
   } else if (field.type === 'select') {
     input = document.createElement('select');
     (field.options || []).forEach((opt) => {
@@ -621,6 +879,51 @@ function init() {
       validateFmt.addEventListener('change', async () => {
         await convertFieldByFormat(validateFmt, validateInput, dataModelFallback.validate);
       });
+    }
+    if (tool.id === 'regex') {
+      const patternInput = inputs.pattern;
+      const textInput = inputs.text;
+      const textField = panel.querySelector('.field[data-key="text"]');
+
+      if (patternInput && textInput && textField) {
+        const editor = document.createElement('div');
+        editor.className = 'regex-text-editor';
+
+        const highlightLayer = document.createElement('pre');
+        highlightLayer.className = 'regex-text-highlight';
+        highlightLayer.setAttribute('aria-hidden', 'true');
+
+        textInput.classList.add('regex-text-input');
+        textInput.spellcheck = false;
+
+        textInput.parentNode.insertBefore(editor, textInput);
+        editor.appendChild(highlightLayer);
+        editor.appendChild(textInput);
+
+        const status = document.createElement('p');
+        status.className = 'regex-live-status';
+        textField.appendChild(status);
+
+        const syncHighlights = () => {
+          const result = buildRegexTextHighlights(textInput.value, patternInput.value);
+          highlightLayer.innerHTML = result.html;
+          if (!textInput.value.endsWith('\n')) {
+            highlightLayer.innerHTML += '\n';
+          }
+          status.textContent = result.status;
+          status.classList.toggle('error', !result.ok);
+        };
+
+        textInput.addEventListener('scroll', () => {
+          highlightLayer.scrollTop = textInput.scrollTop;
+          highlightLayer.scrollLeft = textInput.scrollLeft;
+        });
+        textInput.addEventListener('input', syncHighlights);
+        patternInput.addEventListener('input', syncHighlights);
+        syncHighlights();
+      }
+
+      panel.querySelector('.grid').after(createRegexCheatsheet());
     }
     if (tool.id !== 'python-playground') {
       runBtn.addEventListener('click', () => runTool(tool, inputs, outputEl));
