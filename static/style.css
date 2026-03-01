@@ -393,8 +393,12 @@ button.run.ghost {
   border: 1px solid var(--terminal-input-border);
 }
 
+.panel[data-panel="regex"] .grid {
+  grid-template-columns: 1fr;
+}
+
 .panel[data-panel="regex"] .field[data-key="pattern"] {
-  grid-column: span 2;
+  grid-column: span 1;
 }
 
 .regex-pattern-editor {
@@ -540,7 +544,7 @@ button.run.ghost {
   border-radius: 8px;
   background: var(--input-bg);
   overflow: hidden;
-  min-height: 180px;
+  min-height: 320px;
 }
 
 .regex-text-highlight,
@@ -555,7 +559,7 @@ button.run.ghost {
 }
 
 .regex-text-highlight {
-  min-height: 180px;
+  min-height: 320px;
   color: transparent;
   pointer-events: none;
 }
@@ -658,7 +662,4 @@ button.run.ghost {
     grid-column: span 1;
   }
 
-  .panel[data-panel="regex"] .field[data-key="pattern"] {
-    grid-column: span 1;
-  }
 }
