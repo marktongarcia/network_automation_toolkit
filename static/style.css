@@ -503,6 +503,70 @@ button.run.ghost {
   font-size: 0.88rem;
 }
 
+.regex-text-editor {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  overflow: hidden;
+  min-height: 180px;
+}
+
+.regex-text-highlight,
+.regex-text-input {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  line-height: 1.45;
+  white-space: pre;
+  overflow: auto;
+}
+
+.regex-text-highlight {
+  min-height: 180px;
+  color: transparent;
+  pointer-events: none;
+}
+
+.regex-text-input {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  resize: vertical;
+}
+
+.regex-text-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.rgx-hit {
+  border-radius: 4px;
+}
+
+.rgx-hit-a {
+  background: rgba(250, 204, 21, 0.45);
+}
+
+.rgx-hit-b {
+  background: rgba(14, 165, 233, 0.35);
+}
+
+.regex-live-status {
+  margin: 0.45rem 0 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.regex-live-status.error {
+  color: #dc2626;
+  font-weight: 600;
+}
+
 @media (max-width: 900px) {
   header {
     flex-direction: column;

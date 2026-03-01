@@ -357,6 +357,72 @@ function createRegexCheatsheet() {
   return wrap;
 }
 
+function parseInlineRegexFlags(pattern) {
+  const inline = pattern.match(/^\(\?([a-zA-Z]+)\)/);
+  if (!inline) {
+    return { source: pattern, flags: '' };
+  }
+
+  const supported = new Set(['i', 'm', 's', 'u', 'y', 'g']);
+  const parsedFlags = Array.from(inline[1]).filter((flag) => supported.has(flag)).join('');
+  return {
+    source: pattern.slice(inline[0].length),
+    flags: parsedFlags
+  };
+}
+
+function buildRegexTextHighlights(text, rawPattern) {
+  if (!rawPattern.trim()) {
+    return { ok: true, html: escapeHtml(text), status: 'Enter a pattern to preview matches.' };
+  }
+
+  const parsed = parseInlineRegexFlags(rawPattern);
+  const flags = Array.from(new Set(`${parsed.flags}g`)).join('');
+  let regex;
+
+  try {
+    regex = new RegExp(parsed.source, flags);
+  } catch (err) {
+    return { ok: false, html: escapeHtml(text), status: `Pattern error: ${err.message}` };
+  }
+
+  const segments = [];
+  const matches = [];
+  let nextStart = 0;
+  let hit;
+  while ((hit = regex.exec(text)) !== null) {
+    const start = hit.index;
+    const end = start + hit[0].length;
+    if (end < start) {
+      break;
+    }
+    matches.push({ start, end });
+    if (hit[0] === '') {
+      regex.lastIndex += 1;
+      if (regex.lastIndex > text.length) break;
+    }
+  }
+
+  if (matches.length === 0) {
+    return { ok: true, html: escapeHtml(text), status: 'No matches yet.' };
+  }
+
+  matches.forEach((range, idx) => {
+    segments.push(escapeHtml(text.slice(nextStart, range.start)));
+    const matchText = escapeHtml(text.slice(range.start, range.end));
+    const className = idx % 2 === 0 ? 'rgx-hit rgx-hit-a' : 'rgx-hit rgx-hit-b';
+    segments.push(`<span class="${className}">${matchText || ' '}</span>`);
+    nextStart = range.end;
+  });
+  segments.push(escapeHtml(text.slice(nextStart)));
+
+  return {
+    ok: true,
+    html: segments.join(''),
+    status: `${matches.length} match${matches.length === 1 ? '' : 'es'} highlighted in real-time.`
+  };
+}
+
 function initTheme() {
   if (!themeSelect) return;
 
@@ -785,6 +851,48 @@ function init() {
       });
     }
     if (tool.id === 'regex') {
+      const patternInput = inputs.pattern;
+      const textInput = inputs.text;
+      const textField = panel.querySelector('.field[data-key="text"]');
+
+      if (patternInput && textInput && textField) {
+        const editor = document.createElement('div');
+        editor.className = 'regex-text-editor';
+
+        const highlightLayer = document.createElement('pre');
+        highlightLayer.className = 'regex-text-highlight';
+        highlightLayer.setAttribute('aria-hidden', 'true');
+
+        textInput.classList.add('regex-text-input');
+        textInput.spellcheck = false;
+
+        textInput.parentNode.insertBefore(editor, textInput);
+        editor.appendChild(highlightLayer);
+        editor.appendChild(textInput);
+
+        const status = document.createElement('p');
+        status.className = 'regex-live-status';
+        textField.appendChild(status);
+
+        const syncHighlights = () => {
+          const result = buildRegexTextHighlights(textInput.value, patternInput.value);
+          highlightLayer.innerHTML = result.html;
+          if (!textInput.value.endsWith('\n')) {
+            highlightLayer.innerHTML += '\n';
+          }
+          status.textContent = result.status;
+          status.classList.toggle('error', !result.ok);
+        };
+
+        textInput.addEventListener('scroll', () => {
+          highlightLayer.scrollTop = textInput.scrollTop;
+          highlightLayer.scrollLeft = textInput.scrollLeft;
+        });
+        textInput.addEventListener('input', syncHighlights);
+        patternInput.addEventListener('input', syncHighlights);
+        syncHighlights();
+      }
+
       panel.querySelector('.grid').after(createRegexCheatsheet());
     }
     if (tool.id !== 'python-playground') {
