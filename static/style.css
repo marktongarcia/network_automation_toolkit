@@ -503,8 +503,20 @@ button.run.ghost {
   grid-template-columns: 1fr;
 }
 
+.panel[data-panel="textfsm"] .grid {
+  grid-template-columns: 1fr;
+}
+
 .panel[data-panel="regex"] .field[data-key="pattern"] {
   grid-column: span 1;
+}
+
+.panel[data-panel="textfsm"] .field[data-key="template"] .live-code-editor {
+  min-height: 260px !important;
+}
+
+.panel[data-panel="textfsm"] .field[data-key="text"] textarea {
+  min-height: 280px;
 }
 
 .regex-pattern-editor {
