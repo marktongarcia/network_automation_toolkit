@@ -393,6 +393,116 @@ button.run.ghost {
   border: 1px solid var(--terminal-input-border);
 }
 
+.panel[data-panel="regex"] .field[data-key="pattern"] {
+  grid-column: span 2;
+}
+
+.regex-pattern-editor {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  overflow: hidden;
+  min-height: 110px;
+}
+
+.regex-highlight,
+.regex-pattern-input {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  line-height: 1.45;
+  white-space: pre;
+  overflow: auto;
+}
+
+.regex-highlight {
+  min-height: 110px;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.regex-pattern-input {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  resize: vertical;
+}
+
+.regex-pattern-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.rgx-esc {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.rgx-class {
+  color: #15803d;
+}
+
+.rgx-quant {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.rgx-group {
+  color: #7c3aed;
+  font-weight: 600;
+}
+
+.rgx-anchor {
+  color: #b45309;
+  font-weight: 700;
+}
+
+.rgx-op {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.regex-cheatsheet {
+  margin-top: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.regex-cheatsheet summary {
+  cursor: pointer;
+  padding: 0.55rem 0.7rem;
+  font-weight: 600;
+}
+
+.regex-cheatsheet-content {
+  border-top: 1px solid var(--border);
+  padding: 0.65rem 0.7rem 0.75rem;
+}
+
+.regex-cheatsheet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.45rem 0.7rem;
+  font-size: 0.9rem;
+}
+
+.regex-cheatsheet code {
+  font-family: "JetBrains Mono", Consolas, monospace;
+}
+
+.regex-tip {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 @media (max-width: 900px) {
   header {
     flex-direction: column;
@@ -450,6 +560,10 @@ button.run.ghost {
   }
 
   .panel[data-panel="data-model"] .field[data-key="sample_data"] {
+    grid-column: span 1;
+  }
+
+  .panel[data-panel="regex"] .field[data-key="pattern"] {
     grid-column: span 1;
   }
 }

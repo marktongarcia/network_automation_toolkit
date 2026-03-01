@@ -123,7 +123,7 @@ const tools = [
     chooser: 'Best for: token extraction from strings. Alternative: TextFSM/TTP when you need complete record parsing.',
     endpoint: '/api/regex',
     fields: [
-      { key: 'pattern', label: 'Pattern', type: 'input', value: '(?ms)^interface\\s+(\\S+)\\n\\s+ip address\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\n\\s+description\\s+(.+?)\\n!' },
+      { key: 'pattern', label: 'Pattern', type: 'regex-editor', value: '(?ms)^interface\\s+(\\S+)\\n\\s+ip address\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\n\\s+description\\s+(.+?)\\n!' },
       { key: 'text', label: 'Text', type: 'textarea', value: 'interface GigabitEthernet0/0\n ip address 10.10.10.1 255.255.255.0\n description WAN_LINK_TO_ISP\n!\ninterface GigabitEthernet0/1\n ip address 172.16.20.1 255.255.255.0\n description LAN_USERS_VLAN20\n!\ninterface Loopback0\n ip address 192.168.255.1 255.255.255.255\n description ROUTER_ID\n!' }
     ]
   },
@@ -228,6 +228,135 @@ function pretty(value) {
   return JSON.stringify(value, null, 2);
 }
 
+function escapeHtml(value) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function highlightRegexPattern(pattern) {
+  const lookaroundPrefixes = ['(?<=', '(?<!', '(?=', '(?!', '(?:', '(?P<', '(?<'];
+  let i = 0;
+  let html = '';
+
+  while (i < pattern.length) {
+    const char = pattern[i];
+    const rest = pattern.slice(i);
+
+    if (char === '\\') {
+      const token = pattern.slice(i, Math.min(i + 2, pattern.length));
+      html += `<span class="rgx-esc">${escapeHtml(token)}</span>`;
+      i += token.length;
+      continue;
+    }
+
+    if (char === '[') {
+      let j = i + 1;
+      while (j < pattern.length) {
+        if (pattern[j] === '\\') {
+          j += 2;
+          continue;
+        }
+        if (pattern[j] === ']') {
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      const token = pattern.slice(i, j);
+      html += `<span class="rgx-class">${escapeHtml(token)}</span>`;
+      i = j;
+      continue;
+    }
+
+    const quantifier = rest.match(/^\{\d+(,\d*)?\}\??/);
+    if (quantifier) {
+      html += `<span class="rgx-quant">${escapeHtml(quantifier[0])}</span>`;
+      i += quantifier[0].length;
+      continue;
+    }
+
+    if (char === '(') {
+      const prefix = lookaroundPrefixes.find((candidate) => rest.startsWith(candidate));
+      if (prefix) {
+        html += `<span class="rgx-group">${escapeHtml(prefix)}</span>`;
+        i += prefix.length;
+      } else {
+        html += '<span class="rgx-group">(</span>';
+        i += 1;
+      }
+      continue;
+    }
+
+    if (char === ')') {
+      html += '<span class="rgx-group">)</span>';
+      i += 1;
+      continue;
+    }
+
+    if (char === '^' || char === '$') {
+      html += `<span class="rgx-anchor">${char}</span>`;
+      i += 1;
+      continue;
+    }
+
+    if (char === '*' || char === '+' || char === '?') {
+      html += `<span class="rgx-quant">${char}</span>`;
+      i += 1;
+      continue;
+    }
+
+    if (char === '|') {
+      html += '<span class="rgx-op">|</span>';
+      i += 1;
+      continue;
+    }
+
+    if (char === '.') {
+      html += '<span class="rgx-op">.</span>';
+      i += 1;
+      continue;
+    }
+
+    html += escapeHtml(char);
+    i += 1;
+  }
+
+  return html;
+}
+
+function createRegexCheatsheet() {
+  const wrap = document.createElement('details');
+  wrap.className = 'regex-cheatsheet';
+
+  const summary = document.createElement('summary');
+  summary.textContent = 'Regex quick help / cheatsheet';
+  wrap.appendChild(summary);
+
+  const content = document.createElement('div');
+  content.className = 'regex-cheatsheet-content';
+  content.innerHTML = `
+    <div class="regex-cheatsheet-grid">
+      <div><code>\\d</code> digit, <code>\\w</code> word, <code>\\s</code> whitespace</div>
+      <div><code>.</code> any char, <code>.*?</code> lazy wildcard capture</div>
+      <div><code>^</code> line start, <code>$</code> line end</div>
+      <div><code>[A-Z0-9_]</code> character class, <code>[^ ]</code> negated class</div>
+      <div><code>* + ? {m,n}</code> quantifiers</div>
+      <div><code>(...)</code> capture, <code>(?:...)</code> non-capturing</div>
+      <div><code>(?=...)</code> lookahead, <code>(?!...)</code> negative lookahead</div>
+      <div><code>(?&lt;=...)</code> lookbehind, <code>(?&lt;!...)</code> negative lookbehind</div>
+      <div><code>|</code> alternation (OR)</div>
+      <div><code>\\b</code> word boundary</div>
+      <div><code>(?i)</code> ignore case, <code>(?m)</code> multiline, <code>(?s)</code> dotall</div>
+      <div><code>\\.</code> matches literal dot, <code>\\(</code> literal parenthesis</div>
+    </div>
+    <p class="regex-tip">Tip: for network parsing, anchor blocks with <code>^interface</code> and make inner matches lazy with <code>.+?</code> when boundaries repeat.</p>
+  `;
+  wrap.appendChild(content);
+  return wrap;
+}
+
 function initTheme() {
   if (!themeSelect) return;
 
@@ -268,6 +397,39 @@ function createField(field, inputs) {
   if (field.type === 'textarea') {
     input = document.createElement('textarea');
     input.value = field.value || '';
+  } else if (field.type === 'regex-editor') {
+    const editor = document.createElement('div');
+    editor.className = 'regex-pattern-editor';
+
+    const highlightLayer = document.createElement('pre');
+    highlightLayer.className = 'regex-highlight';
+    highlightLayer.setAttribute('aria-hidden', 'true');
+
+    input = document.createElement('textarea');
+    input.className = 'regex-pattern-input';
+    input.value = field.value || '';
+    input.spellcheck = false;
+    input.rows = 4;
+
+    const syncHighlight = () => {
+      highlightLayer.innerHTML = highlightRegexPattern(input.value);
+      if (!input.value.endsWith('\n')) {
+        highlightLayer.innerHTML += '\n';
+      }
+    };
+
+    input.addEventListener('input', syncHighlight);
+    input.addEventListener('scroll', () => {
+      highlightLayer.scrollTop = input.scrollTop;
+      highlightLayer.scrollLeft = input.scrollLeft;
+    });
+    syncHighlight();
+
+    editor.appendChild(highlightLayer);
+    editor.appendChild(input);
+    wrap.appendChild(editor);
+    inputs[field.key] = input;
+    return wrap;
   } else if (field.type === 'select') {
     input = document.createElement('select');
     (field.options || []).forEach((opt) => {
@@ -621,6 +783,9 @@ function init() {
       validateFmt.addEventListener('change', async () => {
         await convertFieldByFormat(validateFmt, validateInput, dataModelFallback.validate);
       });
+    }
+    if (tool.id === 'regex') {
+      panel.querySelector('.grid').after(createRegexCheatsheet());
     }
     if (tool.id !== 'python-playground') {
       runBtn.addEventListener('click', () => runTool(tool, inputs, outputEl));
