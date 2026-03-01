@@ -337,19 +337,49 @@ function createRegexCheatsheet() {
   const content = document.createElement('div');
   content.className = 'regex-cheatsheet-content';
   content.innerHTML = `
-    <div class="regex-cheatsheet-grid">
-      <div><code>\\d</code> digit, <code>\\w</code> word, <code>\\s</code> whitespace</div>
-      <div><code>.</code> any char, <code>.*?</code> lazy wildcard capture</div>
-      <div><code>^</code> line start, <code>$</code> line end</div>
-      <div><code>[A-Z0-9_]</code> character class, <code>[^ ]</code> negated class</div>
-      <div><code>* + ? {m,n}</code> quantifiers</div>
-      <div><code>(...)</code> capture, <code>(?:...)</code> non-capturing</div>
-      <div><code>(?=...)</code> lookahead, <code>(?!...)</code> negative lookahead</div>
-      <div><code>(?&lt;=...)</code> lookbehind, <code>(?&lt;!...)</code> negative lookbehind</div>
-      <div><code>|</code> alternation (OR)</div>
-      <div><code>\\b</code> word boundary</div>
-      <div><code>(?i)</code> ignore case, <code>(?m)</code> multiline, <code>(?s)</code> dotall</div>
-      <div><code>\\.</code> matches literal dot, <code>\\(</code> literal parenthesis</div>
+    <div class="regex-cheatsheet-table-wrap">
+      <table class="regex-cheatsheet-table">
+        <thead>
+          <tr>
+            <th>Pattern</th>
+            <th>Meaning</th>
+            <th>Example</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="section-row"><td colspan="3">Character Classes</td></tr>
+          <tr><td><code>\\d</code></td><td>Digit</td><td><code>VLAN\\d+</code></td></tr>
+          <tr><td><code>\\w</code></td><td>Word character (a-z, A-Z, 0-9, _)</td><td><code>\\w+_ID</code></td></tr>
+          <tr><td><code>\\s</code></td><td>Whitespace</td><td><code>ip\\s+address</code></td></tr>
+          <tr><td><code>[A-Z0-9_]</code></td><td>Custom class</td><td><code>HOST_[A-Z0-9_]+</code></td></tr>
+          <tr><td><code>[^ ]</code></td><td>Negated class (not a space)</td><td><code>[^\\s]+</code></td></tr>
+
+          <tr class="section-row"><td colspan="3">Anchors and Boundaries</td></tr>
+          <tr><td><code>^</code></td><td>Start of line</td><td><code>^interface</code></td></tr>
+          <tr><td><code>$</code></td><td>End of line</td><td><code>up$</code></td></tr>
+          <tr><td><code>\\b</code></td><td>Word boundary</td><td><code>\\bip\\b</code></td></tr>
+
+          <tr class="section-row"><td colspan="3">Quantifiers</td></tr>
+          <tr><td><code>*</code></td><td>0 or more</td><td><code>\\d*</code></td></tr>
+          <tr><td><code>+</code></td><td>1 or more</td><td><code>\\d+</code></td></tr>
+          <tr><td><code>?</code></td><td>0 or 1 (or lazy modifier)</td><td><code>\\w+?</code></td></tr>
+          <tr><td><code>{m,n}</code></td><td>Between m and n</td><td><code>\\d{1,3}</code></td></tr>
+
+          <tr class="section-row"><td colspan="3">Groups and Logic</td></tr>
+          <tr><td><code>(...)</code></td><td>Capturing group</td><td><code>(GigabitEthernet\\d+/\\d+)</code></td></tr>
+          <tr><td><code>(?:...)</code></td><td>Non-capturing group</td><td><code>(?:up|down)</code></td></tr>
+          <tr><td><code>|</code></td><td>OR alternation</td><td><code>up|down</code></td></tr>
+          <tr><td><code>.</code></td><td>Any character</td><td><code>desc.+</code></td></tr>
+
+          <tr class="section-row"><td colspan="3">Lookarounds and Flags</td></tr>
+          <tr><td><code>(?=...)</code></td><td>Positive lookahead</td><td><code>\\d+(?=Mbps)</code></td></tr>
+          <tr><td><code>(?!...)</code></td><td>Negative lookahead</td><td><code>interface(?!\\s+Loopback)</code></td></tr>
+          <tr><td><code>(?&lt;=...)</code></td><td>Positive lookbehind</td><td><code>(?&lt;=ip\\saddress\\s)\\S+</code></td></tr>
+          <tr><td><code>(?&lt;!...)</code></td><td>Negative lookbehind</td><td><code>(?&lt;!admin\\s)down</code></td></tr>
+          <tr><td><code>(?i) (?m) (?s)</code></td><td>Ignore case, multiline, dotall</td><td><code>(?mi)^interface</code></td></tr>
+          <tr><td><code>\\.</code> <code>\\(</code></td><td>Escape special chars literally</td><td><code>10\\.10\\.10\\.1</code></td></tr>
+        </tbody>
+      </table>
     </div>
     <p class="regex-tip">Tip: for network parsing, anchor blocks with <code>^interface</code> and make inner matches lazy with <code>.+?</code> when boundaries repeat.</p>
   `;

@@ -486,15 +486,46 @@ button.run.ghost {
   padding: 0.65rem 0.7rem 0.75rem;
 }
 
-.regex-cheatsheet-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.45rem 0.7rem;
-  font-size: 0.9rem;
-}
-
 .regex-cheatsheet code {
   font-family: "JetBrains Mono", Consolas, monospace;
+}
+
+.regex-cheatsheet-table-wrap {
+  overflow-x: auto;
+}
+
+.regex-cheatsheet-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 0.89rem;
+}
+
+.regex-cheatsheet-table th,
+.regex-cheatsheet-table td {
+  border: 1px solid var(--border);
+  padding: 0.46rem 0.54rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.regex-cheatsheet-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--usecase-bg);
+  color: var(--usecase-text);
+  font-weight: 700;
+}
+
+.regex-cheatsheet-table tbody tr:nth-child(even):not(.section-row) {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.regex-cheatsheet-table .section-row td {
+  background: var(--chooser-bg);
+  color: var(--chooser-text);
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .regex-tip {
