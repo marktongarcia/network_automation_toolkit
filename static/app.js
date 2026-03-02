@@ -592,7 +592,8 @@ const toolCheatsheetRows = {
     ['Patterns', '^', 'Start-of-line anchor', '^Interface\\s+'],
     ['Actions', '-> Continue', 'Stay in current state', '^\\s+ -> Continue'],
     ['Actions', '-> Clear', 'Clear values before continue', '^! -> Clear'],
-    ['Flow', '-> StateName', 'Transition to another state', '^foo -> NextState']
+    ['Flow', '-> StateName', 'Transition to another state', '^foo -> NextState'],
+    ['Templates', 'NTC library', 'Reference templates by platform/command and paste into Template field', 'https://github.com/networktocode/ntc-templates/tree/master/ntc_templates/templates']
   ],
   ttp: [
     ['Groups', '<group name="x">', 'Define capture section', '<group name="interfaces">'],
