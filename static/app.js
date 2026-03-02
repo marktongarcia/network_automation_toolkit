@@ -746,6 +746,13 @@ function createCodeEditor(field, inputs) {
   const minHeightPx = Math.max(rows * 22, 120);
   editor.style.minHeight = `${minHeightPx}px`;
 
+  const gutter = document.createElement('pre');
+  gutter.className = 'live-code-gutter';
+  gutter.setAttribute('aria-hidden', 'true');
+
+  const stage = document.createElement('div');
+  stage.className = 'live-code-stage';
+
   const highlightLayer = document.createElement('pre');
   highlightLayer.className = 'live-code-highlight';
   highlightLayer.setAttribute('aria-hidden', 'true');
@@ -757,23 +764,37 @@ function createCodeEditor(field, inputs) {
   input.spellcheck = false;
   input.wrap = 'off';
   highlightLayer.style.minHeight = `${minHeightPx}px`;
+  gutter.style.minHeight = `${minHeightPx}px`;
+
+  const syncGutter = () => {
+    const lineCount = input.value.split('\n').length;
+    let numbers = '';
+    for (let i = 1; i <= lineCount; i += 1) {
+      numbers += `${i}\n`;
+    }
+    gutter.textContent = numbers || '1\n';
+  };
 
   const syncHighlight = () => {
     highlightLayer.innerHTML = getSyntaxHighlightHtml(field.mode || 'plain', input.value);
     if (!input.value.endsWith('\n')) {
       highlightLayer.innerHTML += '\n';
     }
+    syncGutter();
   };
 
   input.addEventListener('input', syncHighlight);
   input.addEventListener('scroll', () => {
     highlightLayer.scrollTop = input.scrollTop;
     highlightLayer.scrollLeft = input.scrollLeft;
+    gutter.scrollTop = input.scrollTop;
   });
   syncHighlight();
 
-  editor.appendChild(highlightLayer);
-  editor.appendChild(input);
+  stage.appendChild(highlightLayer);
+  stage.appendChild(input);
+  editor.appendChild(gutter);
+  editor.appendChild(stage);
   inputs[field.key] = input;
   return editor;
 }

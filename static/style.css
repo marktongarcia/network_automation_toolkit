@@ -447,10 +447,32 @@ button.run.ghost {
 .live-code-editor {
   position: relative;
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--input-bg);
   overflow: visible;
+}
+
+.live-code-gutter {
+  margin: 0;
+  padding: 0.5rem 0.45rem 0.5rem 0.65rem;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 80%, #000 20%);
+  color: var(--muted);
+  font: inherit;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  line-height: 1.45;
+  white-space: pre;
+  text-align: right;
+  user-select: none;
+  overflow: hidden;
+  min-width: 3.2rem;
+}
+
+.live-code-stage {
+  position: relative;
+  display: grid;
 }
 
 .live-code-highlight,
