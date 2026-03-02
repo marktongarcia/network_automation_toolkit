@@ -438,6 +438,12 @@ button.run.ghost {
   border: 1px solid var(--terminal-input-border);
 }
 
+.python-session-status {
+  margin: 0.6rem 0 0;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
 .live-code-editor {
   position: relative;
   display: grid;

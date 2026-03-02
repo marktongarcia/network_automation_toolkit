@@ -146,6 +146,7 @@ const panelRoot = document.getElementById('panels');
 const panelTemplate = document.getElementById('panel-template');
 const themeSelect = document.getElementById('theme-select');
 let pythonPlaygroundSessionId = null;
+let pythonPlaygroundVarTypes = { var1: '?', var2: '?', var3: '?' };
 const j2FallbackVars = {
   json: '{\n  "hostname": "R1-EDGE",\n  "loopback": {\n    "ip": "192.168.255.1",\n    "mask": "255.255.255.255"\n  },\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "description": "WAN_TO_ISP",\n      "ip": "10.10.10.1",\n      "mask": "255.255.255.252",\n      "shutdown": false\n    },\n    {\n      "name": "GigabitEthernet0/1",\n      "description": "LAN_USERS",\n      "ip": "172.16.20.1",\n      "mask": "255.255.255.0",\n      "shutdown": false\n    }\n  ]\n}',
   yaml: 'hostname: R1-EDGE\nloopback:\n  ip: 192.168.255.1\n  mask: 255.255.255.255\ninterfaces:\n  - name: GigabitEthernet0/0\n    description: WAN_TO_ISP\n    ip: 10.10.10.1\n    mask: 255.255.255.252\n    shutdown: false\n  - name: GigabitEthernet0/1\n    description: LAN_USERS\n    ip: 172.16.20.1\n    mask: 255.255.255.0\n    shutdown: false\n'
@@ -161,6 +162,50 @@ const dataModelFallback = {
   }
 };
 
+function currentTimeStamp() {
+  return new Date().toLocaleTimeString([], { hour12: false });
+}
+
+function appendTerminalEntry(outputEl, message, options = {}) {
+  const { spacer = false } = options;
+  const prefix = `[${currentTimeStamp()}] `;
+  const normalized = String(message ?? '').replace(/\r\n/g, '\n').replace(/\n$/, '');
+  const lines = normalized ? normalized.split('\n') : [''];
+  if (spacer && outputEl.textContent) {
+    outputEl.textContent += '\n';
+  }
+  lines.forEach((line, index) => {
+    const pad = index === 0 ? prefix : ' '.repeat(prefix.length);
+    outputEl.textContent += `${pad}${line}\n`;
+  });
+  outputEl.scrollTop = outputEl.scrollHeight;
+}
+
+function parseVarTypesFromSessionSummary(summary) {
+  const parsed = { var1: '?', var2: '?', var3: '?' };
+  const text = String(summary || '');
+  const regex = /var([123]) type:\s*([^\n]+)/g;
+  let match = regex.exec(text);
+  while (match) {
+    parsed[`var${match[1]}`] = match[2].trim();
+    match = regex.exec(text);
+  }
+  return parsed;
+}
+
+function renderPythonSessionStatus(statusEl) {
+  const state = pythonPlaygroundSessionId ? `active (${pythonPlaygroundSessionId.slice(0, 8)}...)` : 'inactive';
+  statusEl.textContent = `Session: ${state} | var1:${pythonPlaygroundVarTypes.var1} var2:${pythonPlaygroundVarTypes.var2} var3:${pythonPlaygroundVarTypes.var3} | Shortcuts: Enter run prompt, Ctrl+Enter run Code Pad, Ctrl+L clear output`;
+}
+
+function isEnterPress(event) {
+  return event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter';
+}
+
+function isCodePadRunShortcut(event) {
+  return isEnterPress(event) && (event.ctrlKey || event.metaKey);
+}
+
 async function execPythonPlayground(tool, inputs, outputEl, codeText, options = {}) {
   const focusPrompt = () => {
     if (inputs.__py_command) {
@@ -172,14 +217,12 @@ async function execPythonPlayground(tool, inputs, outputEl, codeText, options = 
   const code = (codeText || '').trim();
 
   if (!pythonPlaygroundSessionId) {
-    outputEl.textContent += '\n[error] No active session. Click Start Session first.\n';
-    outputEl.scrollTop = outputEl.scrollHeight;
+    appendTerminalEntry(outputEl, '[error] No active session. Click Start Session first.', { spacer: true });
     focusPrompt();
     return;
   }
   if (!code) {
-    outputEl.textContent += '\n[error] Code input is empty.\n';
-    outputEl.scrollTop = outputEl.scrollHeight;
+    appendTerminalEntry(outputEl, '[error] Code input is empty.', { spacer: true });
     focusPrompt();
     return;
   }
@@ -190,9 +233,8 @@ async function execPythonPlayground(tool, inputs, outputEl, codeText, options = 
     function_code: codeText
   };
 
-  outputEl.textContent += `\n${prefix}${code}\n`;
-  outputEl.textContent += '... running ...\n';
-  outputEl.scrollTop = outputEl.scrollHeight;
+  appendTerminalEntry(outputEl, `${prefix}${code}`, { spacer: true });
+  appendTerminalEntry(outputEl, '... running ...');
 
   try {
     const res = await fetch(tool.endpoint, {
@@ -202,23 +244,21 @@ async function execPythonPlayground(tool, inputs, outputEl, codeText, options = 
     });
     const data = await res.json();
     if (!data.ok) {
-      outputEl.textContent += `[error] ${data.error}\n`;
+      appendTerminalEntry(outputEl, `[error] ${data.error}`);
     } else {
       const out = data.result || {};
-      if (out.stdout) outputEl.textContent += out.stdout.endsWith('\n') ? out.stdout : `${out.stdout}\n`;
+      if (out.stdout) appendTerminalEntry(outputEl, out.stdout);
       if (Object.prototype.hasOwnProperty.call(out, 'result')) {
-        outputEl.textContent += `${pretty(out.result)}\n`;
+        appendTerminalEntry(outputEl, `[result] ${pretty(out.result)}`);
       }
-      if (out.stderr) outputEl.textContent += `[stderr]\n${out.stderr}`;
+      if (out.stderr) appendTerminalEntry(outputEl, `[stderr]\n${out.stderr}`);
     }
     if (clearPrompt && inputs.__py_command) {
       inputs.__py_command.value = '';
     }
-    outputEl.scrollTop = outputEl.scrollHeight;
     focusPrompt();
   } catch (err) {
-    outputEl.textContent += `[error] Request failed: ${err}\n`;
-    outputEl.scrollTop = outputEl.scrollHeight;
+    appendTerminalEntry(outputEl, `[error] Request failed: ${err}`);
     focusPrompt();
   }
 }
@@ -1247,7 +1287,8 @@ function init() {
       clearBtn.type = 'button';
       clearBtn.className = 'run ghost';
       clearBtn.addEventListener('click', () => {
-        outputEl.textContent = 'Terminal cleared. Session is still active.';
+        outputEl.textContent = '';
+        appendTerminalEntry(outputEl, 'Terminal cleared. Session state unchanged.');
       });
 
       const focusPromptBtn = document.createElement('button');
@@ -1278,16 +1319,22 @@ function init() {
       const commandInput = document.createElement('input');
       commandInput.type = 'text';
       commandInput.className = 'terminal-input';
-      commandInput.placeholder = 'Type Python and press Enter (example: print(value))';
+      commandInput.placeholder = 'Type Python and press Enter (Ctrl+L clears output)';
       commandInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
+        if (event.key.toLowerCase() === 'l' && event.ctrlKey) {
+          event.preventDefault();
+          outputEl.textContent = '';
+          appendTerminalEntry(outputEl, 'Terminal cleared. Session state unchanged.');
+          return;
+        }
+        if (isEnterPress(event)) {
           event.preventDefault();
           runTool(tool, inputs, outputEl);
         }
       });
       if (inputs.code_pad) {
         inputs.code_pad.addEventListener('keydown', async (event) => {
-          if (event.key === 'Enter' && event.ctrlKey) {
+          if (isCodePadRunShortcut(event)) {
             event.preventDefault();
             await execPythonPlayground(tool, inputs, outputEl, inputs.code_pad.value, { prefix: '[pad] ' });
           }
@@ -1298,6 +1345,11 @@ function init() {
       panel.appendChild(terminalTools);
       panel.appendChild(commandWrap);
       inputs.__py_command = commandInput;
+
+      const sessionStatus = document.createElement('p');
+      sessionStatus.className = 'python-session-status';
+      panel.appendChild(sessionStatus);
+      renderPythonSessionStatus(sessionStatus);
 
       const startBtn = document.createElement('button');
       startBtn.textContent = 'Start Session';
@@ -1325,14 +1377,18 @@ function init() {
           const data = await res.json();
           if (data.ok) {
             pythonPlaygroundSessionId = data.session_id;
-            outputEl.textContent = `Session: ${pythonPlaygroundSessionId}\n${data.result}\n`;
+            pythonPlaygroundVarTypes = parseVarTypesFromSessionSummary(data.result);
+            renderPythonSessionStatus(sessionStatus);
+            outputEl.textContent = '';
+            appendTerminalEntry(outputEl, `Session: ${pythonPlaygroundSessionId}`);
+            appendTerminalEntry(outputEl, data.result);
             focusPrompt();
           } else {
-            outputEl.textContent += `\n[error] ${data.error}\n`;
+            appendTerminalEntry(outputEl, `[error] ${data.error}`, { spacer: true });
             focusPrompt();
           }
         } catch (err) {
-          outputEl.textContent += `\n[error] Request failed: ${err}\n`;
+          appendTerminalEntry(outputEl, `[error] Request failed: ${err}`, { spacer: true });
           focusPrompt();
         }
       });
@@ -1370,13 +1426,18 @@ function init() {
           const v1 = info.var1 || {};
           const v2 = info.var2 || {};
           const v3 = info.var3 || {};
-          outputEl.textContent += `\n[var check] var1: ${v1.type || 'unknown'}${v1.warning ? ` | warning: ${v1.warning}` : ''}\n`;
-          outputEl.textContent += `[var check] var2: ${v2.type || 'unknown'}${v2.warning ? ` | warning: ${v2.warning}` : ''}\n`;
-          outputEl.textContent += `[var check] var3: ${v3.type || 'unknown'}${v3.warning ? ` | warning: ${v3.warning}` : ''}\n`;
-          outputEl.scrollTop = outputEl.scrollHeight;
+          pythonPlaygroundVarTypes = {
+            var1: v1.type || 'unknown',
+            var2: v2.type || 'unknown',
+            var3: v3.type || 'unknown'
+          };
+          renderPythonSessionStatus(sessionStatus);
+          appendTerminalEntry(outputEl, `[var check] var1: ${v1.type || 'unknown'}${v1.warning ? ` | warning: ${v1.warning}` : ''}`, { spacer: true });
+          appendTerminalEntry(outputEl, `[var check] var2: ${v2.type || 'unknown'}${v2.warning ? ` | warning: ${v2.warning}` : ''}`);
+          appendTerminalEntry(outputEl, `[var check] var3: ${v3.type || 'unknown'}${v3.warning ? ` | warning: ${v3.warning}` : ''}`);
           focusPrompt();
         } catch (err) {
-          outputEl.textContent += `\n[error] Request failed: ${err}\n`;
+          appendTerminalEntry(outputEl, `[error] Request failed: ${err}`, { spacer: true });
           focusPrompt();
         }
       });
@@ -1393,7 +1454,7 @@ function init() {
           }
         };
         if (!pythonPlaygroundSessionId) {
-          outputEl.textContent += '\nNo active session.\n';
+          appendTerminalEntry(outputEl, 'No active session.', { spacer: true });
           focusPrompt();
           return;
         }
@@ -1406,10 +1467,12 @@ function init() {
           });
           const data = await res.json();
           pythonPlaygroundSessionId = null;
-          outputEl.textContent += `\n${data.result || 'Session reset.'}\n`;
+          pythonPlaygroundVarTypes = { var1: '?', var2: '?', var3: '?' };
+          renderPythonSessionStatus(sessionStatus);
+          appendTerminalEntry(outputEl, data.result || 'Session reset.', { spacer: true });
           focusPrompt();
         } catch (err) {
-          outputEl.textContent += `\n[error] Request failed: ${err}\n`;
+          appendTerminalEntry(outputEl, `[error] Request failed: ${err}`, { spacer: true });
           focusPrompt();
         }
       });
@@ -1417,7 +1480,8 @@ function init() {
       panel.querySelector('.actions').prepend(startBtn);
       panel.querySelector('.actions').appendChild(checkVarsBtn);
       panel.querySelector('.actions').appendChild(resetBtn);
-      outputEl.textContent = 'Start Session to load `value`, then use Command Prompt below.';
+      outputEl.textContent = '';
+      appendTerminalEntry(outputEl, 'Start Session to load `value`, then use Command Prompt below.');
       attachPythonLintPreview(tool, inputs, panel);
     }
     if (tool.id === 'jinja2') {
