@@ -62,23 +62,27 @@ FLASK_DEBUG=1 ./app.py
 
 ### Overview
 
-![Toolkit Overview (J2 Renderer)](docs/images/toolkit-overview-j2-renderer.png)
+![Toolkit Overview (XPath Tester)](images/toolkit-overview-xpath-tester.png)
 
 ### Python Playground
 
-![Python Playground Session](docs/images/python-playground-session.png)
+![Python Playground Session](images/python-playground-session.png)
 
 ### Regex Tester
 
-![Regex Tester Sample](docs/images/regex-tester-sample.png)
+![Regex Tester Sample](images/regex-tester-sample.png)
 
 ### J2 Renderer
 
-![J2 Renderer Sample](docs/images/j2-renderer-sample.png)
+![J2 Renderer Sample](images/j2-renderer-sample.png)
 
 ### Data Format Converter
 
-![Data Format Converter Sample](docs/images/data-format-converter-sample.png)
+![Data Format Converter Sample](images/data-format-converter-sample.png)
+
+### TextFSM Parser
+
+![TextFSM Parser Sample](images/textfsm-parser-sample.png)
 
 ## Project Structure
 
