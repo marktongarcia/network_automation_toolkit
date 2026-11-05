@@ -1,5 +1,30 @@
 const tools = [
   {
+    id: 'jinja2',
+    title: 'J2 Renderer',
+    description: 'Render Jinja2 templates with JSON/YAML variables.',
+    useCase: 'Use case: preview generated configs locally before pushing to devices or committing templates.',
+    chooser: 'Best for: deterministic text generation from structured vars. Alternative: Python Playground when output is non-template logic.',
+    endpoint: '/api/jinja2',
+    fields: [
+      { key: 'template', label: 'Template', type: 'code-editor', mode: 'jinja2', rows: 14, value: 'hostname {{ hostname }}\n!\ninterface Loopback0\n ip address {{ loopback.ip }} {{ loopback.mask }}\n description Router-ID\n!\n{% for intf in interfaces %}interface {{ intf.name }}\n description {{ intf.description }}\n ip address {{ intf.ip }} {{ intf.mask }}\n{% if intf.shutdown %} shutdown\n{% else %} no shutdown\n{% endif %}!\n{% endfor %}' },
+      { key: 'variables_format', label: 'Variables Format', type: 'select', options: ['json', 'yaml'], value: 'json' },
+      { key: 'variables', label: 'Variables', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "loopback": {\n    "ip": "192.168.255.1",\n    "mask": "255.255.255.255"\n  },\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "description": "WAN_TO_ISP",\n      "ip": "10.10.10.1",\n      "mask": "255.255.255.252",\n      "shutdown": false\n    },\n    {\n      "name": "GigabitEthernet0/1",\n      "description": "LAN_USERS",\n      "ip": "172.16.20.1",\n      "mask": "255.255.255.0",\n      "shutdown": false\n    }\n  ]\n}' }
+    ]
+  },
+  {
+    id: 'regex',
+    title: 'Regex Tester',
+    description: 'Match regular expressions against text.',
+    useCase: 'Use case: iterate on regex patterns for parsing interfaces, IPs, and tags from raw text.',
+    chooser: 'Best for: token extraction from strings. Alternative: TextFSM/TTP when you need complete record parsing.',
+    endpoint: '/api/regex',
+    fields: [
+      { key: 'pattern', label: 'Pattern', type: 'regex-editor', value: '(?ms)^interface\\s+(\\S+)\\n\\s+ip address\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\n\\s+description\\s+(.+?)\\n!' },
+      { key: 'text', label: 'Text', type: 'textarea', value: 'interface GigabitEthernet0/0\n ip address 10.10.10.1 255.255.255.0\n description WAN_LINK_TO_ISP\n!\ninterface GigabitEthernet0/1\n ip address 172.16.20.1 255.255.255.0\n description LAN_USERS_VLAN20\n!\ninterface Loopback0\n ip address 192.168.255.1 255.255.255.255\n description ROUTER_ID\n!' }
+    ]
+  },
+  {
     id: 'textfsm',
     title: 'TextFSM Parser',
     description: 'Parse CLI output with a TextFSM template.',
@@ -9,6 +34,58 @@ const tools = [
     fields: [
       { key: 'template', label: 'Template', type: 'code-editor', mode: 'textfsm', rows: 10, value: 'Value INTERFACE (\\S+)\nValue IP_ADDRESS (\\S+)\nValue STATUS (up|down|administratively down)\nValue PROTOCOL (up|down)\n\nStart\n  ^${INTERFACE}\\s+${IP_ADDRESS}\\s+YES\\s+\\S+\\s+${STATUS}\\s+${PROTOCOL} -> Record' },
       { key: 'text', label: 'Raw Text', type: 'textarea', value: 'Interface              IP-Address      OK? Method Status                Protocol\nGigabitEthernet0/0     10.10.10.1      YES manual up                    up\nGigabitEthernet0/1     172.16.20.1     YES manual up                    up\nGigabitEthernet0/2     unassigned      YES unset  administratively down down\nLoopback0              192.168.255.1   YES manual up                    up' }
+    ]
+  },
+  {
+    id: 'convert',
+    title: 'Data Format Converter',
+    description: 'Convert between JSON, XML, and YAML.',
+    useCase: 'Use case: normalize data formats between systems, such as YAML vars to JSON APIs or XML exports to JSON.',
+    chooser: 'Best for: fast format translation. Alternative: keep source format and use XPath/JMESPath directly when conversion is unnecessary.',
+    endpoint: '/api/convert',
+    fields: [
+      { key: 'source_format', label: 'Source Format', type: 'select', options: ['json', 'xml', 'yaml'], value: 'json' },
+      { key: 'target_format', label: 'Target Format', type: 'select', options: ['json', 'xml', 'yaml'], value: 'yaml' },
+      { key: 'content', label: 'Content', type: 'textarea', value: '{\n  "device": {\n    "hostname": "R1-EDGE",\n    "site": "NYC1",\n    "asn": 65001,\n    "interfaces": [\n      {"name": "GigabitEthernet0/0", "ip": "10.10.10.1/30"},\n      {"name": "GigabitEthernet0/1", "ip": "172.16.20.1/24"}\n    ]\n  }\n}' }
+    ]
+  },
+  {
+    id: 'jmespath',
+    title: 'JMESPath Validator',
+    description: 'Evaluate JMESPath expressions on JSON.',
+    useCase: 'Use case: filter large JSON responses (facts, telemetry, API output) to only what your playbook needs.',
+    chooser: 'Best for: querying/filtering JSON. Alternative: use Python Playground when query logic becomes procedural.',
+    endpoint: '/api/jmespath',
+    fields: [
+      { key: 'data', label: 'Data (JSON)', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "interfaces": [\n    {"name": "GigabitEthernet0/0", "enabled": true, "counters": {"in_errors": 0, "out_errors": 2}},\n    {"name": "GigabitEthernet0/1", "enabled": true, "counters": {"in_errors": 4, "out_errors": 1}},\n    {"name": "GigabitEthernet0/2", "enabled": false, "counters": {"in_errors": 0, "out_errors": 0}}\n  ]\n}' },
+      { key: 'expression', label: 'JMESPath', type: 'code-editor', mode: 'jmespath', rows: 3, value: 'interfaces[?enabled && counters.in_errors > `0`].{name:name,in_errors:counters.in_errors}' }
+    ]
+  },
+  {
+    id: 'python-playground',
+    title: 'Python Playground',
+    description: 'Session-based Python REPL with value preloaded for quick experiments.',
+    useCase: 'Use case: rapidly test imports, expressions, and data transforms on value before moving code into your project.',
+    chooser: 'Best for: ad-hoc Python logic and exploratory testing. Alternative: JMESPath/Jinja2 for simpler declarative transforms.',
+    endpoint: '/api/python-playground',
+    fields: [
+      { key: 'var1', label: 'var1', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "interfaces": [\n    {"name": "GigabitEthernet0/0", "in_util": 72.5},\n    {"name": "GigabitEthernet0/1", "in_util": 28.0},\n    {"name": "GigabitEthernet0/2", "in_util": 4.2}\n  ]\n}' },
+      { key: 'var2', label: 'var2', type: 'textarea', value: '{"threshold": 50, "ticket_prefix": "NOC"}' },
+      { key: 'var3', label: 'var3', type: 'textarea', value: '["GigabitEthernet0/0", "GigabitEthernet0/1"]' },
+      { key: 'code_pad', label: 'Code Pad (multiline)', type: 'code-editor', mode: 'python', rows: 12, value: 'def hot_interfaces():\n    t = var2["threshold"]\n    return [i["name"] for i in value["interfaces"] if i["in_util"] > t]\n\nprint("Hot interfaces:", hot_interfaces())' },
+      { key: 'note', label: 'Note', type: 'note', value: 'Interactive mode: start a session, load multiline code from Code Pad, then run quick commands in prompt below. value is an alias for var1. var2 and var3 are also available.' }
+    ]
+  },
+  {
+    id: 'ttp',
+    title: 'TTP Parser',
+    description: 'Parse text data with TTP template.',
+    useCase: 'Use case: parse semi-structured CLI output into named fields when TextFSM is not the best fit.',
+    chooser: 'Best for: hierarchical or less rigid CLI output. Alternative: TextFSM for highly regular command output.',
+    endpoint: '/api/ttp',
+    fields: [
+      { key: 'template', label: 'TTP Template', type: 'code-editor', mode: 'ttp', rows: 10, value: '<group name=\"interfaces\">\ninterface {{ name }}\n description {{ description | ORPHRASE }}\n ip address {{ ip }} {{ mask }}\n {{ state | ORPHRASE }}\n!</group>' },
+      { key: 'data', label: 'Data', type: 'textarea', value: 'interface GigabitEthernet0/0\n description WAN_TO_ISP\n ip address 10.10.10.1 255.255.255.252\n no shutdown\n!\ninterface GigabitEthernet0/1\n description LAN_USERS\n ip address 172.16.20.1 255.255.255.0\n no shutdown\n!\ninterface GigabitEthernet0/2\n description UNUSED_PORT\n ip address 0.0.0.0 0.0.0.0\n shutdown\n!' }
     ]
   },
   {
@@ -36,31 +113,6 @@ const tools = [
     ]
   },
   {
-    id: 'jmespath',
-    title: 'JMESPath Validator',
-    description: 'Evaluate JMESPath expressions on JSON.',
-    useCase: 'Use case: filter large JSON responses (facts, telemetry, API output) to only what your playbook needs.',
-    chooser: 'Best for: querying/filtering JSON. Alternative: use Python Playground when query logic becomes procedural.',
-    endpoint: '/api/jmespath',
-    fields: [
-      { key: 'data', label: 'Data (JSON)', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "interfaces": [\n    {"name": "GigabitEthernet0/0", "enabled": true, "counters": {"in_errors": 0, "out_errors": 2}},\n    {"name": "GigabitEthernet0/1", "enabled": true, "counters": {"in_errors": 4, "out_errors": 1}},\n    {"name": "GigabitEthernet0/2", "enabled": false, "counters": {"in_errors": 0, "out_errors": 0}}\n  ]\n}' },
-      { key: 'expression', label: 'JMESPath', type: 'code-editor', mode: 'jmespath', rows: 3, value: 'interfaces[?enabled && counters.in_errors > `0`].{name:name,in_errors:counters.in_errors}' }
-    ]
-  },
-  {
-    id: 'convert',
-    title: 'Data Format Converter',
-    description: 'Convert between JSON, XML, and YAML.',
-    useCase: 'Use case: normalize data formats between systems, such as YAML vars to JSON APIs or XML exports to JSON.',
-    chooser: 'Best for: fast format translation. Alternative: keep source format and use XPath/JMESPath directly when conversion is unnecessary.',
-    endpoint: '/api/convert',
-    fields: [
-      { key: 'source_format', label: 'Source Format', type: 'select', options: ['json', 'xml', 'yaml'], value: 'json' },
-      { key: 'target_format', label: 'Target Format', type: 'select', options: ['json', 'xml', 'yaml'], value: 'yaml' },
-      { key: 'content', label: 'Content', type: 'textarea', value: '{\n  "device": {\n    "hostname": "R1-EDGE",\n    "site": "NYC1",\n    "asn": 65001,\n    "interfaces": [\n      {"name": "GigabitEthernet0/0", "ip": "10.10.10.1/30"},\n      {"name": "GigabitEthernet0/1", "ip": "172.16.20.1/24"}\n    ]\n  }\n}' }
-    ]
-  },
-  {
     id: 'data-model',
     title: 'Data Model Workbench',
     description: 'Infer a model from sample data and validate payloads against it.',
@@ -73,58 +125,6 @@ const tools = [
       { key: 'validate_format', label: 'Validate Data Format', type: 'select', options: ['json', 'yaml'], value: 'json' },
       { key: 'sample_data', label: 'Sample Data', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "site": "NYC1",\n  "asn": 65001,\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "enabled": true,\n      "ip": "10.10.10.1/30"\n    },\n    {\n      "name": "GigabitEthernet0/1",\n      "enabled": true,\n      "ip": "172.16.20.1/24"\n    }\n  ]\n}' },
       { key: 'validate_data', label: 'Validate Data (Optional)', type: 'textarea', value: '{\n  "hostname": "R2-EDGE",\n  "site": "SFO1",\n  "asn": 65010,\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "enabled": true,\n      "ip": "10.20.30.1/30"\n    }\n  ]\n}' }
-    ]
-  },
-  {
-    id: 'jinja2',
-    title: 'J2 Renderer',
-    description: 'Render Jinja2 templates with JSON/YAML variables.',
-    useCase: 'Use case: preview generated configs locally before pushing to devices or committing templates.',
-    chooser: 'Best for: deterministic text generation from structured vars. Alternative: Python Playground when output is non-template logic.',
-    endpoint: '/api/jinja2',
-    fields: [
-      { key: 'template', label: 'Template', type: 'code-editor', mode: 'jinja2', rows: 14, value: 'hostname {{ hostname }}\n!\ninterface Loopback0\n ip address {{ loopback.ip }} {{ loopback.mask }}\n description Router-ID\n!\n{% for intf in interfaces %}interface {{ intf.name }}\n description {{ intf.description }}\n ip address {{ intf.ip }} {{ intf.mask }}\n{% if intf.shutdown %} shutdown\n{% else %} no shutdown\n{% endif %}!\n{% endfor %}' },
-      { key: 'variables_format', label: 'Variables Format', type: 'select', options: ['json', 'yaml'], value: 'json' },
-      { key: 'variables', label: 'Variables', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "loopback": {\n    "ip": "192.168.255.1",\n    "mask": "255.255.255.255"\n  },\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "description": "WAN_TO_ISP",\n      "ip": "10.10.10.1",\n      "mask": "255.255.255.252",\n      "shutdown": false\n    },\n    {\n      "name": "GigabitEthernet0/1",\n      "description": "LAN_USERS",\n      "ip": "172.16.20.1",\n      "mask": "255.255.255.0",\n      "shutdown": false\n    }\n  ]\n}' }
-    ]
-  },
-  {
-    id: 'ttp',
-    title: 'TTP Parser',
-    description: 'Parse text data with TTP template.',
-    useCase: 'Use case: parse semi-structured CLI output into named fields when TextFSM is not the best fit.',
-    chooser: 'Best for: hierarchical or less rigid CLI output. Alternative: TextFSM for highly regular command output.',
-    endpoint: '/api/ttp',
-    fields: [
-      { key: 'template', label: 'TTP Template', type: 'code-editor', mode: 'ttp', rows: 10, value: '<group name=\"interfaces\">\ninterface {{ name }}\n description {{ description | ORPHRASE }}\n ip address {{ ip }} {{ mask }}\n {{ state | ORPHRASE }}\n!</group>' },
-      { key: 'data', label: 'Data', type: 'textarea', value: 'interface GigabitEthernet0/0\n description WAN_TO_ISP\n ip address 10.10.10.1 255.255.255.252\n no shutdown\n!\ninterface GigabitEthernet0/1\n description LAN_USERS\n ip address 172.16.20.1 255.255.255.0\n no shutdown\n!\ninterface GigabitEthernet0/2\n description UNUSED_PORT\n ip address 0.0.0.0 0.0.0.0\n shutdown\n!' }
-    ]
-  },
-  {
-    id: 'python-playground',
-    title: 'Python Playground',
-    description: 'Session-based Python REPL with value preloaded for quick experiments.',
-    useCase: 'Use case: rapidly test imports, expressions, and data transforms on value before moving code into your project.',
-    chooser: 'Best for: ad-hoc Python logic and exploratory testing. Alternative: JMESPath/Jinja2 for simpler declarative transforms.',
-    endpoint: '/api/python-playground',
-    fields: [
-      { key: 'var1', label: 'var1', type: 'textarea', value: '{\n  "hostname": "R1-EDGE",\n  "interfaces": [\n    {"name": "GigabitEthernet0/0", "in_util": 72.5},\n    {"name": "GigabitEthernet0/1", "in_util": 28.0},\n    {"name": "GigabitEthernet0/2", "in_util": 4.2}\n  ]\n}' },
-      { key: 'var2', label: 'var2', type: 'textarea', value: '{"threshold": 50, "ticket_prefix": "NOC"}' },
-      { key: 'var3', label: 'var3', type: 'textarea', value: '["GigabitEthernet0/0", "GigabitEthernet0/1"]' },
-      { key: 'code_pad', label: 'Code Pad (multiline)', type: 'code-editor', mode: 'python', rows: 12, value: 'def hot_interfaces():\n    t = var2["threshold"]\n    return [i["name"] for i in value["interfaces"] if i["in_util"] > t]\n\nprint("Hot interfaces:", hot_interfaces())' },
-      { key: 'note', label: 'Note', type: 'note', value: 'Interactive mode: start a session, load multiline code from Code Pad, then run quick commands in prompt below. value is an alias for var1. var2 and var3 are also available.' }
-    ]
-  },
-  {
-    id: 'regex',
-    title: 'Regex Tester',
-    description: 'Match regular expressions against text.',
-    useCase: 'Use case: iterate on regex patterns for parsing interfaces, IPs, and tags from raw text.',
-    chooser: 'Best for: token extraction from strings. Alternative: TextFSM/TTP when you need complete record parsing.',
-    endpoint: '/api/regex',
-    fields: [
-      { key: 'pattern', label: 'Pattern', type: 'regex-editor', value: '(?ms)^interface\\s+(\\S+)\\n\\s+ip address\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\n\\s+description\\s+(.+?)\\n!' },
-      { key: 'text', label: 'Text', type: 'textarea', value: 'interface GigabitEthernet0/0\n ip address 10.10.10.1 255.255.255.0\n description WAN_LINK_TO_ISP\n!\ninterface GigabitEthernet0/1\n ip address 172.16.20.1 255.255.255.0\n description LAN_USERS_VLAN20\n!\ninterface Loopback0\n ip address 192.168.255.1 255.255.255.255\n description ROUTER_ID\n!' }
     ]
   },
   {

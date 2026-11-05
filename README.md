@@ -10,16 +10,16 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 
 ## Feature Set
 
+- `J2 Renderer` (Jinja2 template rendering, with an optional NetBox mode)
+- `Regex Tester`
 - `TextFSM Parser` for structured extraction from CLI output
+- `Data Format Converter` (`JSON <-> XML <-> YAML`)
+- `JMESPath Validator` for JSON filtering and selection
+- `Python Playground` with session state and terminal-style prompt
+- `TTP Parser` for semi-structured text parsing
 - `XPath Tester` for XML/NETCONF queries
 - `JSON Schema Validator` for payload contract checks
-- `JMESPath Validator` for JSON filtering and selection
-- `Data Format Converter` (`JSON <-> XML <-> YAML`)
 - `Data Model Workbench` to infer JSON Schema/Pydantic models and validate payloads
-- `J2 Renderer` (Jinja2 template rendering, with an optional NetBox mode)
-- `TTP Parser` for semi-structured text parsing
-- `Python Playground` with session state and terminal-style prompt
-- `Regex Tester`
 - `Base64 Utility`
 - Theme selector with `Sand`, `Solarized`, `Light`, and `Dark` palettes (saved in browser)
 - `Ctrl+Enter` runs the current tool, a `Copy` button on every output, and the last-used tab is remembered
