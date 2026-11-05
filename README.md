@@ -23,6 +23,7 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 - `Base64 Utility`
 - Theme selector with `Sand`, `Solarized`, `Light`, and `Dark` palettes (saved in browser)
 - `Ctrl+Enter` runs the current tool, a `Copy` button on every output, and the last-used tab is remembered
+- Hover tooltips: J2 output shows the template line that produced it; TextFSM input shows the matching rule and captured Values; JSON Schema underlines every error in the data; JMESPath and XPath data show the path to the hovered value
 
 ## Python Playground Highlights
 
@@ -130,6 +131,7 @@ GitHub Actions for every push and pull request (`.github/workflows/tests.yml`).
 .
 ├── app.py                  # Flask app and all API endpoints
 ├── regex_engine.py         # Regex Tester: time-limited matching and portability rules
+├── hover_trace.py          # Data for hover tooltips (J2 line mapping, TextFSM rule trace)
 ├── templates/
 │   └── index.html          # Page shell
 ├── static/

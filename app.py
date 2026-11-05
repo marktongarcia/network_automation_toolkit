@@ -28,9 +28,12 @@ from flask import Flask, jsonify, render_template, request
 from jinja2 import BaseLoader, Environment, StrictUndefined, TemplateSyntaxError
 from jinja2.sandbox import SandboxedEnvironment
 from jsonschema import ValidationError, validate
+from jsonschema.exceptions import best_match
+from jsonschema.validators import validator_for
 from lxml import etree
 from ttp import ttp
 
+import hover_trace
 import regex_engine
 
 app = Flask(__name__)
@@ -232,10 +235,10 @@ def textfsm_parser():
         return error_response("Template and text are required.")
 
     try:
-        parser = textfsm.TextFSM(io.StringIO(template))
+        parser = hover_trace.TracingTextFSM(io.StringIO(template))
         rows = parser.ParseText(raw_text)
         records = [dict(zip(parser.header, row)) for row in rows]
-        return jsonify({"ok": True, "headers": parser.header, "rows": rows, "records": records})
+        return jsonify({"ok": True, "headers": parser.header, "rows": rows, "records": records, "trace": parser.trace})
     except Exception as exc:
         return error_response(str(exc))
 
@@ -252,13 +255,22 @@ def xpath_tester():
     try:
         root = etree.fromstring(xml_text.encode("utf-8"))
         matches = root.xpath(expression)
-        output = []
+        if not isinstance(matches, list):  # count(), sum(), boolean() etc. return a single value
+            return jsonify({"ok": True, "count": 1, "results": [str(matches)], "nodes": []})
+        order = {id(el): i for i, el in enumerate(e for e in root.iter() if isinstance(e.tag, str))}
+        output, node_refs = [], []
         for item in matches:
             if isinstance(item, etree._Element):
                 output.append(etree.tostring(item, encoding="unicode", pretty_print=True).strip())
+                if isinstance(item.tag, str) and id(item) in order:
+                    node_refs.append({"element": order[id(item)], "kind": "element"})
             else:
                 output.append(str(item))
-        return jsonify({"ok": True, "count": len(matches), "results": output})
+                parent = item.getparent() if hasattr(item, "getparent") else None
+                if parent is not None and id(parent) in order:
+                    kind = "attribute" if getattr(item, "is_attribute", False) else "text"
+                    node_refs.append({"element": order[id(parent)], "kind": kind, "name": getattr(item, "attrname", None)})
+        return jsonify({"ok": True, "count": len(matches), "results": output, "nodes": node_refs})
     except Exception as exc:
         return error_response(str(exc))
 
@@ -275,8 +287,27 @@ def json_schema_validator():
     try:
         schema = json.loads(schema_text)
         data = json.loads(data_text)
-        validate(instance=data, schema=schema)
-        return jsonify({"ok": True, "valid": True, "message": "Valid JSON for provided schema."})
+        validator_cls = validator_for(schema)
+        validator_cls.check_schema(schema)
+        errors = sorted(validator_cls(schema).iter_errors(data), key=lambda e: list(e.absolute_path))
+        if not errors:
+            return jsonify({"ok": True, "valid": True, "message": "Valid JSON for provided schema.", "errors": []})
+        primary = best_match(errors)
+        return jsonify({
+            "ok": True,
+            "valid": False,
+            "message": primary.message,
+            "path": list(primary.absolute_path),
+            "errors": [
+                {
+                    "path": list(e.absolute_path),
+                    "message": e.message,
+                    "validator": e.validator,
+                    "schema_path": list(e.absolute_schema_path),
+                }
+                for e in errors
+            ],
+        })
     except ValidationError as exc:
         return jsonify({"ok": True, "valid": False, "message": exc.message, "path": list(exc.path)})
     except Exception as exc:
@@ -400,10 +431,19 @@ def render_netbox_mode(template_text: str, variables: Any) -> str:
         raise ValueError(
             f"NetBox mode needs variables to be a mapping (key: value) at the top level, got {type(variables).__name__}."
         )
-    env = SandboxedEnvironment(loader=BaseLoader())
-    env.filters["env"] = netbox_env_filter
+    env = netbox_environment()
     output = env.from_string(template_text).render(**variables)
     return output.replace("\r\n", "\n")
+
+
+def netbox_environment():
+    env = SandboxedEnvironment(loader=BaseLoader())
+    env.filters["env"] = netbox_env_filter
+    return env
+
+
+def default_environment():
+    return Environment(undefined=StrictUndefined, trim_blocks=True, lstrip_blocks=True)
 
 
 @app.post("/api/jinja2")
@@ -423,7 +463,11 @@ def jinja2_renderer():
             return error_response(f"Variables ({vars_format}): {exc}")
         try:
             variables = {} if variables is None else variables
-            return jsonify({"ok": True, "result": render_netbox_mode(template_text, variables)})
+            rendered = render_netbox_mode(template_text, variables)
+            segments = hover_trace.jinja_segments(
+                netbox_environment(), template_text, variables, rendered, lambda out: out.replace("\r\n", "\n")
+            )
+            return jsonify({"ok": True, "result": rendered, "segments": segments})
         except Exception as exc:
             line = netbox_template_line(exc)
             where = f"Template line {line}: " if line else ""
@@ -441,10 +485,11 @@ def jinja2_renderer():
         variables = parse_structured_input(vars_format, vars_text)
         if variables is None:
             variables = {}
-        env = Environment(undefined=StrictUndefined, trim_blocks=True, lstrip_blocks=True)
+        env = default_environment()
         template = env.from_string(template_text)
         rendered = template.render(**variables)
-        return jsonify({"ok": True, "result": rendered})
+        segments = hover_trace.jinja_segments(default_environment(), template_text, variables, rendered)
+        return jsonify({"ok": True, "result": rendered, "segments": segments})
     except Exception as exc:
         return error_response(str(exc))
 

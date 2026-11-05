@@ -54,7 +54,7 @@ def test_ttp(client):
 def test_xpath(client):
     xml = "<r><i><n>a</n><e>true</e></i><i><n>b</n><e>false</e></i></r>"
     data = post(client, "/api/xpath", xml=xml, xpath="//i[e='true']/n/text()")
-    assert data == {"ok": True, "count": 1, "results": ["a"]}
+    assert (data["ok"], data["count"], data["results"]) == (True, 1, ["a"])
 
 
 def test_xpath_invalid_xml(client):
@@ -118,7 +118,7 @@ def test_base64_round_trip(client):
 def test_jinja2_default_trims_blocks(client):
     template = "{{ a }}\n{% if true %}\nx\n{% endif %}\n"
     data = post(client, "/api/jinja2", template=template, variables='{"a": 1}')
-    assert data == {"ok": True, "result": "1\nx\n"}
+    assert (data["ok"], data["result"]) == (True, "1\nx\n")
 
 
 def test_jinja2_default_is_strict(client):
@@ -298,3 +298,52 @@ def test_regex_line_anchor_note(client):
     with_m = post(client, "/api/regex", pattern=r"^65001_[0-9]+$", text="65001_65002\n65002_65001", flags="m")
     assert with_m["count"] == 1
     assert not next(p for p in with_m["portability"] if p["id"] == "python")["hints"]
+
+
+# --- Hover tooltip data ---------------------------------------------------------------
+
+def test_jinja2_segments_map_output_to_template_lines(client):
+    template = "hostname {{ h }}\n!\n{% for i in ifs %}interface {{ i }}\n{% if loop.first %} uplink\n{% else %} access\n{% endif %}{% endfor %}"
+    for netbox in (False, True):
+        data = post(client, "/api/jinja2", template=template, variables='{"h": "r1", "ifs": ["a", "b"]}', netbox_mode=netbox)
+        segments = data["segments"]
+        assert "".join(text for _, text in segments) == data["result"]
+        by_text = {text.strip(): line for line, text in segments if text.strip()}
+        assert by_text["!"] == 2
+        assert by_text["uplink"] == 4
+        assert by_text["access"] == 5  # the else branch, not the if line
+
+
+def test_jinja2_segments_skip_captured_blocks(client):
+    template = "{% set b %}abc{% endset %}{{ b | length }}\n{% macro m() %}x{% endmacro %}{{ m() }}"
+    data = post(client, "/api/jinja2", template=template, variables="{}")
+    assert data["result"] == "3\nx"  # markers must not leak into captured values
+    assert data["segments"] is not None
+
+
+def test_textfsm_trace(client):
+    template = "Value NAME (\\S+)\nValue IP (\\S+)\n\nStart\n  ^interface ${NAME}\n  ^ ip address ${IP} -> Record\n"
+    text = "interface Gi0/0\n ip address 10.0.0.1\nnoise\ninterface Gi0/1\n ip address 10.0.0.2\n"
+    data = post(client, "/api/textfsm", template=template, text=text)
+    trace = {t["line"]: t for t in data["trace"]}
+    assert 2 not in trace  # "noise" matched no rule
+    assert trace[0]["values"]["NAME"] == [10, 15, "Gi0/0"]
+    assert trace[0]["state"] == "Start" and trace[0]["rule_line"] == 5
+    assert trace[1]["action"] == "Record" and trace[1]["record"] == 0
+    assert trace[4]["record"] == 1
+
+
+def test_json_schema_reports_all_errors(client):
+    schema = '{"type": "object", "properties": {"devices": {"type": "array", "items": {"type": "object", "required": ["name"], "properties": {"asn": {"type": "integer"}}}}}}'
+    data = post(client, "/api/json-schema", schema=schema, data='{"devices": [{"name": "r1", "asn": "x"}, {"asn": 1}]}')
+    assert data["valid"] is False
+    paths = sorted((tuple(e["path"]), e["validator"]) for e in data["errors"])
+    assert paths == [(("devices", 0, "asn"), "type"), (("devices", 1), "required")]
+
+
+def test_xpath_nodes_for_highlighting(client):
+    xml = "<r><i><n>a</n></i><i><n>b</n></i></r>"
+    data = post(client, "/api/xpath", xml=xml, xpath="//i")
+    assert data["nodes"] == [{"element": 1, "kind": "element"}, {"element": 3, "kind": "element"}]
+    counted = post(client, "/api/xpath", xml=xml, xpath="count(//i)")
+    assert counted["results"] == ["2.0"] and counted["nodes"] == []

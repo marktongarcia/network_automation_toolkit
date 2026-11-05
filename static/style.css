@@ -1081,6 +1081,86 @@ button.run.ghost {
   margin-bottom: 0.15rem;
 }
 
+/* Text boxes with a highlight layer behind the text (TextFSM, JSON Schema, JMESPath, XPath). */
+.overlay-editor {
+  position: relative;
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+}
+
+.overlay-layer,
+.overlay-input {
+  grid-area: 1 / 1;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.overlay-layer {
+  color: transparent;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.overlay-input {
+  position: relative;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  overflow: auto;
+}
+
+.overlay-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ov-error {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--error) 22%, transparent);
+  text-decoration: underline wavy var(--error);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.ov-match {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+/* J2 output: segments that came from the hovered template line. */
+.tl-seg.tl-active {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.tip-note {
+  margin-top: 0.3rem;
+  color: var(--muted);
+}
+
+.tip-error {
+  color: var(--error);
+}
+
+.tip-match {
+  margin-top: 0.3rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tip-sep {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0.45rem 0;
+}
+
 .regex-live-status {
   margin: 0.45rem 0 0;
   font-size: 0.86rem;

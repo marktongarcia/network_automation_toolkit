@@ -547,6 +547,501 @@ function renderRegexPortability(container, report) {
 // Per-tool callbacks that receive each API result (from Run or auto preview).
 const toolResultHooks = {};
 
+// ---- Hover tooltips shared by several tools ---------------------------------------------
+
+const sharedTip = (() => {
+  let el = null;
+  const ensure = () => {
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'regex-hover-tip';
+      el.hidden = true;
+      document.body.appendChild(el);
+    }
+    return el;
+  };
+  return {
+    show(x, y, html) {
+      const tip = ensure();
+      tip.innerHTML = html;
+      tip.hidden = false;
+      const margin = 14;
+      const rect = tip.getBoundingClientRect();
+      tip.style.left = `${Math.max(8, Math.min(x + margin, window.innerWidth - rect.width - 8))}px`;
+      tip.style.top = `${Math.max(8, Math.min(y + margin, window.innerHeight - rect.height - 8))}px`;
+    },
+    hide() {
+      if (el) el.hidden = true;
+    }
+  };
+})();
+
+// Put a highlight layer behind a textarea's text (same technique as the Regex Tester).
+function attachOverlay(textarea) {
+  const editor = document.createElement('div');
+  editor.className = 'overlay-editor';
+  const layer = document.createElement('pre');
+  layer.className = 'overlay-layer';
+  layer.setAttribute('aria-hidden', 'true');
+  textarea.classList.add('overlay-input');
+  textarea.wrap = 'off';
+  textarea.spellcheck = false;
+  textarea.parentNode.insertBefore(editor, textarea);
+  editor.append(layer, textarea);
+  const sync = () => {
+    layer.scrollTop = textarea.scrollTop;
+    layer.scrollLeft = textarea.scrollLeft;
+  };
+  textarea.addEventListener('scroll', sync);
+  const render = (html) => {
+    layer.innerHTML = html + (textarea.value.endsWith('\n') ? '' : '\n');
+    sync();
+  };
+  const plain = () => render(escapeHtml(textarea.value));
+  textarea.addEventListener('input', plain); // positions are stale once the text changes
+  plain();
+  return { render, plain };
+}
+
+// Ranges [{start, end, cls}] to highlight HTML; overlapping ranges are skipped.
+function rangesToHtml(text, ranges) {
+  let html = '';
+  let pos = 0;
+  ranges.slice().sort((a, b) => a.start - b.start || b.end - a.end).forEach((r) => {
+    if (r.start < pos || r.end <= r.start) return;
+    html += escapeHtml(text.slice(pos, r.start));
+    html += `<span class="${r.cls}">${escapeHtml(text.slice(r.start, r.end))}</span>`;
+    pos = r.end;
+  });
+  return html + escapeHtml(text.slice(pos));
+}
+
+// Show a tooltip while the mouse moves over a textarea; describe(index) returns HTML or null.
+function attachTextareaHover(textarea, describe) {
+  textarea.addEventListener('mousemove', (event) => {
+    const html = describe(indexFromMouseInTextarea(event, textarea), event);
+    if (html) sharedTip.show(event.clientX, event.clientY, html);
+    else sharedTip.hide();
+  });
+  ['mouseleave', 'blur', 'scroll', 'input'].forEach((evt) => textarea.addEventListener(evt, () => sharedTip.hide()));
+}
+
+function lineStarts(text) {
+  const starts = [0];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '\n') starts.push(i + 1);
+  }
+  return starts;
+}
+
+function lineOfIndex(starts, index) {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= index) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+function tipPreview(value, max = 90) {
+  const s = String(value ?? '');
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+// Positions of every value (and its key) in a JSON text: [{path, start, end, key: [s, e] | null, type}].
+function jsonNodePositions(text) {
+  const found = [];
+  let i = 0;
+  const fail = () => {
+    throw new Error('invalid JSON');
+  };
+  const ws = () => {
+    while (i < text.length && ' \t\r\n'.includes(text[i])) i += 1;
+  };
+  const str = () => {
+    const s = i;
+    i += 1;
+    while (i < text.length && text[i] !== '"') {
+      if (text[i] === '\\') i += 1;
+      i += 1;
+    }
+    if (i >= text.length) fail();
+    i += 1;
+    return [s, i];
+  };
+  const value = (path, keySpan) => {
+    ws();
+    const start = i;
+    const ch = text[i];
+    if (ch === '{' || ch === '[') {
+      const isObject = ch === '{';
+      const node = { path, start, end: start, key: keySpan, type: isObject ? 'object' : 'array' };
+      found.push(node);
+      i += 1;
+      ws();
+      if (text[i] === (isObject ? '}' : ']')) {
+        i += 1;
+      } else {
+        for (let n = 0; ; n += 1) {
+          ws();
+          if (isObject) {
+            if (text[i] !== '"') fail();
+            const [ks, ke] = str();
+            const key = JSON.parse(text.slice(ks, ke));
+            ws();
+            if (text[i] !== ':') fail();
+            i += 1;
+            value([...path, key], [ks, ke]);
+          } else {
+            value([...path, n], null);
+          }
+          ws();
+          if (text[i] === ',') {
+            i += 1;
+          } else if (text[i] === (isObject ? '}' : ']')) {
+            i += 1;
+            break;
+          } else {
+            fail();
+          }
+        }
+      }
+      node.end = i;
+      return;
+    }
+    if (ch === '"') {
+      str();
+    } else {
+      while (i < text.length && !',]}\n\r\t '.includes(text[i])) i += 1;
+      if (i === start) fail();
+    }
+    found.push({ path, start, end: i, key: keySpan, type: 'scalar' });
+  };
+  try {
+    value([], null);
+    return { ok: true, nodes: found };
+  } catch (err) {
+    return { ok: false, nodes: found };
+  }
+}
+
+// The deepest JSON node under the cursor (on its key or its value).
+function jsonNodeAt(nodes, index) {
+  let best = null;
+  nodes.forEach((n) => {
+    const onKey = n.key && index >= n.key[0] && index < n.key[1];
+    const onValue = index >= n.start && index < n.end;
+    if ((onKey || onValue) && (!best || n.path.length > best.path.length)) best = n;
+  });
+  return best;
+}
+
+function jsonPathDisplay(path) {
+  return '$' + path.map((p) => (typeof p === 'number' ? `[${p}]` : /^[A-Za-z_][A-Za-z0-9_]*$/.test(p) ? `.${p}` : `[${JSON.stringify(p)}]`)).join('');
+}
+
+function jmespathOf(path) {
+  if (!path.length) return '@';
+  let out = '';
+  path.forEach((p) => {
+    if (typeof p === 'number') {
+      out += `[${p}]`;
+    } else {
+      const ident = /^[A-Za-z_][A-Za-z0-9_]*$/.test(p) ? p : JSON.stringify(p);
+      out += out ? `.${ident}` : ident;
+    }
+  });
+  return out;
+}
+
+// Elements of an XML text in document order, with positions and an lxml-style XPath.
+function xmlElementPositions(text) {
+  const els = [];
+  const stack = [];
+  let i = 0;
+  while (i < text.length) {
+    const lt = text.indexOf('<', i);
+    if (lt === -1) break;
+    const skipTo = (marker, from) => {
+      const e = text.indexOf(marker, from);
+      return e === -1 ? text.length : e + marker.length;
+    };
+    if (text.startsWith('<!--', lt)) { i = skipTo('-->', lt + 4); continue; }
+    if (text.startsWith('<![CDATA[', lt)) { i = skipTo(']]>', lt); continue; }
+    if (text.startsWith('<?', lt)) { i = skipTo('?>', lt); continue; }
+    if (text.startsWith('<!', lt)) { i = skipTo('>', lt); continue; }
+    let j = lt + 1;
+    let quote = null;
+    while (j < text.length) {
+      const c = text[j];
+      if (quote) {
+        if (c === quote) quote = null;
+      } else if (c === '"' || c === "'") {
+        quote = c;
+      } else if (c === '>') {
+        break;
+      }
+      j += 1;
+    }
+    if (j >= text.length) break;
+    const raw = text.slice(lt, j + 1);
+    if (raw[1] === '/') {
+      const el = stack.pop();
+      if (el) {
+        el.end = j + 1;
+        el.innerEnd = lt;
+      }
+      i = j + 1;
+      continue;
+    }
+    const name = (raw.match(/^<\s*([^\s/>]+)/) || [])[1] || '?';
+    const parent = stack.length ? stack[stack.length - 1] : null;
+    const el = {
+      index: els.length,
+      name,
+      start: lt,
+      tagEnd: j + 1,
+      end: j + 1,
+      innerStart: j + 1,
+      innerEnd: j + 1,
+      parent,
+      children: [],
+      raw,
+      defaultNs: /\sxmlns\s*=/.test(raw) || (parent ? parent.defaultNs : false)
+    };
+    if (parent) parent.children.push(el);
+    els.push(el);
+    if (!/\/\s*>$/.test(raw)) stack.push(el);
+    i = j + 1;
+  }
+  els.forEach((el) => {
+    const siblings = el.parent ? el.parent.children : els.filter((e) => !e.parent);
+    const same = siblings.filter((s) => s.name === el.name);
+    const step = same.length > 1 ? `${el.name}[${same.indexOf(el) + 1}]` : el.name;
+    el.path = `${el.parent ? el.parent.path : ''}/${step}`;
+  });
+  return els;
+}
+
+function xmlAttributeAt(el, index) {
+  const re = /([^\s=/<>"']+)\s*=\s*("[^"]*"|'[^']*')/g;
+  let m;
+  while ((m = re.exec(el.raw)) !== null) {
+    const start = el.start + m.index;
+    const end = start + m[0].length;
+    if (m.index > 0 && index >= start && index < end) return { name: m[1], start, end };
+  }
+  return null;
+}
+
+// Wire the hover tooltips for one tool.
+function attachHoverFeatures(tool, inputs, outputEl) {
+  if (tool.id === 'jinja2') {
+    // Output -> the template line that produced it.
+    let active = null;
+    const clearActive = () => {
+      if (active) outputEl.querySelectorAll(`.tl-seg[data-tl="${active}"]`).forEach((s) => s.classList.remove('tl-active'));
+      active = null;
+    };
+    toolResultHooks.jinja2 = (data) => {
+      clearActive();
+      if (!data || !data.ok || !Array.isArray(data.segments)) return;
+      outputEl.innerHTML = data.segments
+        .map(([line, text]) => (line ? `<span class="tl-seg" data-tl="${line}">${escapeHtml(text)}</span>` : escapeHtml(text)))
+        .join('');
+    };
+    outputEl.addEventListener('mousemove', (event) => {
+      const seg = event.target.closest && event.target.closest('.tl-seg');
+      if (!seg) {
+        clearActive();
+        sharedTip.hide();
+        return;
+      }
+      const line = seg.dataset.tl;
+      if (line !== active) {
+        clearActive();
+        active = line;
+        outputEl.querySelectorAll(`.tl-seg[data-tl="${line}"]`).forEach((s) => s.classList.add('tl-active'));
+      }
+      const source = (inputs.template.value.split('\n')[Number(line) - 1] || '').trim();
+      sharedTip.show(event.clientX, event.clientY, `
+        <div class="regex-tip-title">Template line ${escapeTip(line)}</div>
+        <div><code>${escapeTip(tipPreview(source, 120))}</code></div>
+        <div class="tip-note">Everything highlighted in the output came from this line.</div>`);
+    });
+    outputEl.addEventListener('mouseleave', () => {
+      clearActive();
+      sharedTip.hide();
+    });
+    return;
+  }
+
+  if (tool.id === 'textfsm' && inputs.text) {
+    // Input text -> captured Values and the rule that matched each line.
+    const overlay = attachOverlay(inputs.text);
+    let byLine = new Map();
+    let starts = [];
+    let valueNames = [];
+    toolResultHooks.textfsm = (data) => {
+      byLine = new Map();
+      if (!data || !data.ok || !Array.isArray(data.trace)) {
+        overlay.plain();
+        return;
+      }
+      const text = inputs.text.value;
+      starts = lineStarts(text);
+      const lines = text.split('\n');
+      valueNames = data.headers || [];
+      const ranges = [];
+      data.trace.forEach((t) => {
+        if (!byLine.has(t.line)) byLine.set(t.line, []);
+        byLine.get(t.line).push(t);
+        const lineText = lines[t.line];
+        if (lineText === undefined) return;
+        const toUnit = codePointToUnitMapper(lineText);
+        Object.entries(t.values || {}).forEach(([name, [s, e]]) => {
+          const k = Math.max(0, valueNames.indexOf(name));
+          ranges.push({ start: starts[t.line] + toUnit(s), end: starts[t.line] + toUnit(e), cls: `rgx-hit rgx-hit-p${k % 10}` });
+        });
+      });
+      overlay.render(rangesToHtml(text, ranges));
+    };
+    attachTextareaHover(inputs.text, (index) => {
+      if (!starts.length) return null;
+      const line = lineOfIndex(starts, index);
+      const entries = byLine.get(line);
+      const lineText = inputs.text.value.split('\n')[line] || '';
+      if (!entries) {
+        return lineText.trim() ? `<div class="regex-tip-title">Line ${line + 1}</div><div class="tip-note">No rule matched this line.</div>` : null;
+      }
+      const toUnit = codePointToUnitMapper(lineText);
+      const col = index - starts[line];
+      const blocks = entries.map((t) => {
+        const values = Object.entries(t.values || {}).map(([name, [s, e, v]]) => {
+          const hovered = col >= toUnit(s) && col < toUnit(e) ? ' <strong>(hovered)</strong>' : '';
+          return `<li><code>${escapeTip(name)}</code>${hovered} = <code>${escapeTip(v)}</code></li>`;
+        }).join('');
+        return `
+          <div>State <code>${escapeTip(t.state)}</code> · rule on template line ${escapeTip(t.rule_line)}</div>
+          <div><code>${escapeTip(t.rule)}</code>${t.action ? ` <code>${escapeTip(t.action)}</code>` : ''}</div>
+          ${values ? `<div class="regex-tip-groups-label">Captured into record ${t.record + 1}</div><ul class="regex-tip-groups">${values}</ul>` : '<div class="tip-note">No Values captured on this line.</div>'}`;
+      }).join('<hr class="tip-sep">');
+      return `<div class="regex-tip-title">Line ${line + 1}</div>${blocks}`;
+    });
+    return;
+  }
+
+  if (tool.id === 'json-schema' && inputs.data) {
+    // Data -> JSON path, and every schema error underlined where it happens.
+    const overlay = attachOverlay(inputs.data);
+    let errors = [];
+    let cache = { text: null, nodes: [] };
+    const nodesFor = (text) => {
+      if (cache.text !== text) cache = { text, nodes: jsonNodePositions(text).nodes };
+      return cache.nodes;
+    };
+    const samePath = (a, b) => a.length === b.length && a.every((p, k) => p === b[k]);
+    toolResultHooks['json-schema'] = (data) => {
+      errors = (data && data.ok && data.errors) || [];
+      const text = inputs.data.value;
+      const nodes = nodesFor(text);
+      const ranges = [];
+      errors.forEach((e) => {
+        const node = nodes.find((n) => samePath(n.path, e.path));
+        if (!node) return;
+        const useKey = node.key && node.type !== 'scalar';
+        const [start, end] = useKey ? node.key : node.type === 'scalar' ? [node.start, node.end] : [node.start, node.start + 1];
+        ranges.push({ start, end, cls: 'ov-error' });
+      });
+      overlay.render(rangesToHtml(text, ranges));
+    };
+    attachTextareaHover(inputs.data, (index) => {
+      const node = jsonNodeAt(nodesFor(inputs.data.value), index);
+      if (!node) return null;
+      const here = errors.filter((e) => samePath(e.path, node.path));
+      const errorHtml = here.map((e) => `<li>${escapeTip(e.message)} <span class="tip-note">(${escapeTip(e.validator)})</span></li>`).join('');
+      return `
+        <div class="regex-tip-title"><code>${escapeTip(jsonPathDisplay(node.path))}</code></div>
+        ${errorHtml ? `<div class="regex-tip-groups-label tip-error">Schema error${here.length > 1 ? 's' : ''}</div><ul class="regex-tip-groups">${errorHtml}</ul>` : '<div class="tip-note">No schema errors here.</div>'}`;
+    });
+    return;
+  }
+
+  if (tool.id === 'jmespath' && inputs.data) {
+    // Data -> the JMESPath expression that selects the hovered value.
+    attachOverlay(inputs.data);
+    let cache = { text: null, nodes: [] };
+    attachTextareaHover(inputs.data, (index) => {
+      const text = inputs.data.value;
+      if (cache.text !== text) cache = { text, nodes: jsonNodePositions(text).nodes };
+      const node = jsonNodeAt(cache.nodes, index);
+      if (!node) return null;
+      const value = node.type === 'scalar' ? text.slice(node.start, node.end) : node.type === 'object' ? '{ … }' : '[ … ]';
+      return `
+        <div class="regex-tip-title">JMESPath</div>
+        <div><code>${escapeTip(jmespathOf(node.path))}</code></div>
+        <div>Value <code>${escapeTip(tipPreview(value))}</code></div>
+        <div class="tip-note">Type it in the Expression box to select this value. Use [*] instead of [${'n'}] to select it from every item.</div>`;
+    });
+    return;
+  }
+
+  if (tool.id === 'xpath' && inputs.xml) {
+    // XML -> the element's XPath, and highlights for the nodes the expression matched.
+    const overlay = attachOverlay(inputs.xml);
+    let cache = { text: null, els: [] };
+    let matched = new Map();
+    const elsFor = (text) => {
+      if (cache.text !== text) cache = { text, els: xmlElementPositions(text) };
+      return cache.els;
+    };
+    toolResultHooks.xpath = (data) => {
+      matched = new Map();
+      const text = inputs.xml.value;
+      if (!data || !data.ok || !Array.isArray(data.nodes)) {
+        overlay.plain();
+        return;
+      }
+      const els = elsFor(text);
+      const ranges = [];
+      data.nodes.forEach((n) => {
+        const el = els[n.element];
+        if (!el) return;
+        matched.set(el.index, n.kind);
+        if (n.kind === 'text') {
+          ranges.push({ start: el.innerStart, end: el.innerEnd, cls: 'ov-match' });
+        } else if (n.kind === 'attribute' && n.name) {
+          const local = n.name.replace(/^\{[^}]*\}/, '');
+          const attr = (el.raw.match(new RegExp(`\\s((?:[\\w.-]+:)?${local.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\s*=`)) || [])[1];
+          const at = attr ? el.raw.indexOf(attr) : -1;
+          if (at > 0) ranges.push({ start: el.start + at, end: el.start + at + attr.length, cls: 'ov-match' });
+        } else {
+          ranges.push({ start: el.start, end: el.end, cls: 'ov-match' });
+        }
+      });
+      overlay.render(rangesToHtml(text, ranges));
+    };
+    attachTextareaHover(inputs.xml, (index) => {
+      const els = elsFor(inputs.xml.value);
+      let el = null;
+      els.forEach((e) => {
+        if (index >= e.start && index < e.end) el = e;
+      });
+      if (!el) return null;
+      const attr = index < el.tagEnd ? xmlAttributeAt(el, index) : null;
+      const path = attr ? `${el.path}/@${attr.name}` : el.path;
+      const hit = matched.get(el.index);
+      return `
+        <div class="regex-tip-title">XPath</div>
+        <div><code>${escapeTip(path)}</code></div>
+        ${hit ? `<div class="tip-match">Matched by your expression (${escapeTip(hit)}).</div>` : ''}
+        ${el.defaultNs ? `<div class="tip-note">This element is in a default namespace (xmlns), so a plain path will not match. Use //*[local-name()='${escapeTip(el.name)}'] or register a prefix.</div>` : ''}`;
+    });
+  }
+}
+
 // "Where it's used" panel per tool: what it is, where you meet it in practice, typical tasks, docs.
 const toolAbout = {
   jinja2: {
@@ -2153,6 +2648,7 @@ function init() {
 
       panel.querySelector('.grid').after(createRegexCheatsheet());
     }
+    attachHoverFeatures(tool, inputs, outputEl);
     attachAutoPreview(tool, inputs, outputEl, panel);
     if (tool.id !== 'python-playground') {
       runBtn.addEventListener('click', () => runTool(tool, inputs, outputEl));
