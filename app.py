@@ -446,6 +446,24 @@ def default_environment():
     return Environment(undefined=StrictUndefined, trim_blocks=True, lstrip_blocks=True)
 
 
+_JINJA_REFERENCE = None
+
+
+@app.get("/api/jinja2/reference")
+def jinja2_reference():
+    """Filter and test docs for the template hover tooltips (NetBox's env filter included)."""
+    global _JINJA_REFERENCE
+    if _JINJA_REFERENCE is None:
+        env = default_environment()
+        env.filters["env"] = netbox_env_filter
+        _JINJA_REFERENCE = hover_trace.jinja_reference(env)
+        _JINJA_REFERENCE["filters"]["env"]["doc"] = (
+            "NetBox only: the value of an environment variable, if its name is allowed by "
+            "JINJA_ENVIRONMENT_PARAMS. Returns None here."
+        )
+    return jsonify({"ok": True, **_JINJA_REFERENCE})
+
+
 @app.post("/api/jinja2")
 def jinja2_renderer():
     payload = request.get_json(silent=True) or {}
@@ -461,13 +479,18 @@ def jinja2_renderer():
             variables = parse_structured_input(vars_format, vars_text)
         except Exception as exc:
             return error_response(f"Variables ({vars_format}): {exc}")
+        inspection = usage = None
         try:
             variables = {} if variables is None else variables
+            netbox_names = NETBOX_APP_LABELS | {"device", "virtualmachine"}
+            inspection = hover_trace.inspect_template(netbox_environment(), template_text, variables, netbox_names)
+            usage = hover_trace.variable_usage(netbox_environment(), template_text, variables, vars_text)
             rendered = render_netbox_mode(template_text, variables)
             segments = hover_trace.jinja_segments(
                 netbox_environment(), template_text, variables, rendered, lambda out: out.replace("\r\n", "\n")
             )
-            return jsonify({"ok": True, "result": rendered, "segments": segments})
+            return jsonify({"ok": True, "result": rendered, "segments": segments, "inspect": inspection,
+                            "usage": usage, "context": variables})
         except Exception as exc:
             line = netbox_template_line(exc)
             where = f"Template line {line}: " if line else ""
@@ -479,19 +502,30 @@ def jinja2_renderer():
                     "The template queries the NetBox database, which is not available here. "
                     "Pass the data in as variables instead, or test this template inside NetBox."
                 )
-            return error_response(f"{where}{type(exc).__name__}: {exc}{hint}")
+            return jsonify({"ok": False, "error": f"{where}{type(exc).__name__}: {exc}{hint}",
+                            "inspect": inspection, "usage": usage,
+                            "context": variables if isinstance(variables, dict) else None}), 400
 
     try:
         variables = parse_structured_input(vars_format, vars_text)
         if variables is None:
             variables = {}
+    except Exception as exc:
+        return error_response(str(exc))
+    # The variables check uses a lenient test render, so it lists every problem, not just the first.
+    lenient = Environment(trim_blocks=True, lstrip_blocks=True)
+    inspection = hover_trace.inspect_template(lenient, template_text, variables)
+    usage = hover_trace.variable_usage(lenient, template_text, variables, vars_text)
+    try:
         env = default_environment()
         template = env.from_string(template_text)
         rendered = template.render(**variables)
         segments = hover_trace.jinja_segments(default_environment(), template_text, variables, rendered)
-        return jsonify({"ok": True, "result": rendered, "segments": segments})
+        return jsonify({"ok": True, "result": rendered, "segments": segments, "inspect": inspection,
+                        "usage": usage, "context": variables})
     except Exception as exc:
-        return error_response(str(exc))
+        return jsonify({"ok": False, "error": str(exc), "inspect": inspection, "usage": usage,
+                        "context": variables if isinstance(variables, dict) else None}), 400
 
 
 @app.post("/api/ttp")

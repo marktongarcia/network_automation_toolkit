@@ -1339,6 +1339,270 @@ function xmlAttributeAt(el, index) {
   return null;
 }
 
+// ---- J2 template inspector: hover tooltips and block matching -------------------------
+
+let jinjaReferencePromise = null;
+function loadJinjaReference() {
+  if (!jinjaReferencePromise) {
+    jinjaReferencePromise = fetch('/api/jinja2/reference')
+      .then((res) => res.json())
+      .catch(() => ({ filters: {}, tests: {} }));
+  }
+  return jinjaReferencePromise;
+}
+
+const JINJA_WORDS = new Set([
+  'and', 'or', 'not', 'in', 'is', 'if', 'else', 'elif', 'true', 'false', 'none', 'True', 'False', 'None',
+  'for', 'recursive', 'with', 'without', 'context', 'ignore', 'missing', 'import', 'from', 'as', 'set',
+  'endset', 'endfor', 'endif', 'macro', 'endmacro', 'call', 'endcall', 'filter', 'endfilter', 'block',
+  'endblock', 'extends', 'include', 'raw', 'endraw', 'autoescape', 'endautoescape', 'do', 'break',
+  'continue', 'scoped', 'required', 'endwith'
+]);
+const JINJA_OPENERS = new Set(['for', 'if', 'macro', 'call', 'filter', 'with', 'block', 'autoescape']);
+const JINJA_LOOP_HELP = {
+  index: 'Current iteration, counting from 1',
+  index0: 'Current iteration, counting from 0',
+  revindex: 'Iterations left until the end (1 on the last item)',
+  revindex0: 'Iterations left until the end (0 on the last item)',
+  first: 'True on the first iteration',
+  last: 'True on the last iteration (handy for JSON commas)',
+  length: 'Number of items in the loop',
+  cycle: 'loop.cycle("a", "b") cycles through the values, one per iteration',
+  depth: 'Nesting level in a recursive loop, from 1',
+  depth0: 'Nesting level in a recursive loop, from 0',
+  previtem: 'The item of the previous iteration (undefined on the first)',
+  nextitem: 'The item of the next iteration (undefined on the last)',
+  changed: 'loop.changed(value) is True when value differs from the previous iteration'
+};
+
+// Find the end of a {{ }} / {% %} / {# #} construct, skipping quoted strings.
+function findJinjaClose(text, from, close) {
+  let quote = null;
+  for (let i = from; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+    } else if (close !== '#}' && (c === '"' || c === "'")) {
+      quote = c;
+    } else if (text.startsWith(close, i)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Scan a Jinja template: its tags, the variables/filters/tests used inside them, block
+ * structure (for/if/... with their else/end tags) and loop/set/macro scopes. Best effort,
+ * for tooltips only; rendering always uses the real Jinja.
+ */
+function scanJinjaTemplate(text) {
+  const tags = [];
+  const tokens = [];
+  let i = 0;
+  let inRaw = false;
+  while (i < text.length) {
+    const open = text.indexOf('{', i);
+    if (open === -1 || open + 1 >= text.length) break;
+    const kind = { '{': 'expr', '%': 'tag', '#': 'comment' }[text[open + 1]];
+    if (!kind || (inRaw && kind !== 'tag')) {
+      i = open + 1;
+      continue;
+    }
+    const close = { expr: '}}', tag: '%}', comment: '#}' }[kind];
+    const end = findJinjaClose(text, open + 2, close);
+    if (end === -1) break;
+    let innerStart = open + 2;
+    let innerEnd = end;
+    if ('-+'.includes(text[innerStart])) innerStart += 1;
+    if ('-+'.includes(text[innerEnd - 1])) innerEnd -= 1;
+    const inner = text.slice(innerStart, innerEnd);
+    const keyword = kind === 'tag' ? (inner.match(/^\s*([A-Za-z_]\w*)/) || [])[1] || '' : '';
+    if (inRaw) {
+      if (keyword === 'endraw') {
+        inRaw = false;
+        tags.push({ kind, start: open, end: end + 2, innerStart, innerEnd, keyword });
+      }
+      i = end + 2;
+      continue;
+    }
+    const tag = { kind, start: open, end: end + 2, innerStart, innerEnd, keyword };
+    tags.push(tag);
+    if (keyword === 'raw') inRaw = true;
+    if (kind !== 'comment') tokenizeJinjaInner(text, innerStart, innerEnd, tag, tokens);
+    i = end + 2;
+  }
+
+  // Block structure: link each opener with its else/elif and end tags.
+  const groups = [];
+  const stack = [];
+  tags.forEach((tag) => {
+    const kw = tag.keyword;
+    if (!kw) return;
+    const isBlockSet = kw === 'set' && !/=/.test(text.slice(tag.innerStart, tag.innerEnd));
+    if (JINJA_OPENERS.has(kw) || isBlockSet || kw === 'raw') {
+      const group = { keyword: kw, members: [tag], closed: false };
+      tag.group = group;
+      groups.push(group);
+      stack.push(group);
+    } else if (kw === 'elif' || kw === 'else') {
+      const top = stack[stack.length - 1];
+      if (top) {
+        top.members.push(tag);
+        tag.group = top;
+      } else {
+        const group = { keyword: kw, members: [tag], closed: false, stray: true };
+        tag.group = group;
+        groups.push(group);
+      }
+    } else if (kw.startsWith('end')) {
+      const want = kw.slice(3);
+      const top = stack[stack.length - 1];
+      if (top && top.keyword === want) {
+        top.members.push(tag);
+        top.closed = true;
+        tag.group = top;
+        stack.pop();
+      } else {
+        const group = { keyword: kw, members: [tag], closed: false, stray: true, expected: top ? top.keyword : null };
+        tag.group = group;
+        groups.push(group);
+      }
+    }
+  });
+
+  // Scopes: loop variables, {% set %} names and macro parameters.
+  const loops = [];
+  const sets = [];
+  const params = [];
+  groups.forEach((g) => {
+    const opener = g.members[0];
+    const body = { start: opener.end, end: g.closed ? g.members[g.members.length - 1].start : text.length };
+    const inner = text.slice(opener.innerStart, opener.innerEnd);
+    if (g.keyword === 'for') {
+      const m = inner.match(/^\s*for\s+(.+?)\s+in\s+(.+?)(?:\s+if\s+.+?)?(?:\s+recursive)?\s*$/s);
+      // The loop variable is also in scope inside the for tag itself ("... if intf.enabled").
+      if (m) loops.push({ targets: m[1].split(',').map((t) => t.trim()), iter: m[2].trim(), opener, body: { start: opener.start + 1, end: body.end } });
+    } else if (g.keyword === 'macro') {
+      const m = inner.match(/^\s*macro\s+\w+\s*\(([^)]*)\)/s);
+      if (m) params.push({ names: m[1].split(',').map((p) => p.split('=')[0].trim()).filter(Boolean), opener, body });
+    }
+  });
+  tags.forEach((tag) => {
+    if (tag.keyword !== 'set') return;
+    const m = text.slice(tag.innerStart, tag.innerEnd).match(/^\s*set\s+([\w\s,.]+?)\s*(=|$)/s);
+    if (m) m[1].split(',').forEach((n) => sets.push({ name: n.trim().split('.')[0], tag }));
+  });
+  return { tags, tokens, groups, loops, sets, params };
+}
+
+function tokenizeJinjaInner(text, start, end, tag, tokens) {
+  const re = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\d+(?:\.\d+)?)|([A-Za-z_]\w*)|(==|!=|<=|>=|\*\*|\/\/|[|.\[\](),=:~+\-*\/%<>{}])/g;
+  re.lastIndex = 0;
+  const src = text.slice(start, end);
+  const lex = [];
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    lex.push({ s: start + m.index, e: start + m.index + m[0].length, str: m[1], num: m[2], id: m[3], op: m[4] });
+  }
+  let depth = 0;
+  let lastVar = null;
+  const defining = tag.keyword === 'for' ? 'for' : tag.keyword === 'set' ? 'set' : tag.keyword === 'macro' ? 'macro' : null;
+  let seenIn = false;
+  let seenEq = false;
+  lex.forEach((t, k) => {
+    const prev = lex[k - 1];
+    const prev2 = lex[k - 2];
+    const next = lex[k + 1];
+    if (t.op === '(' || t.op === '[') depth += 1;
+    if (t.op === ')' || t.op === ']') depth -= 1;
+    if (t.id === 'in' && defining === 'for') seenIn = true;
+    if (t.op === '=' && defining === 'set' && depth === 0) seenEq = true;
+    if (!t.id) {
+      if (t.op !== '.') lastVar = t.op === '.' ? lastVar : (t.op === '[' || t.op === ']' ? lastVar : null);
+      return;
+    }
+    if (k === 0 && tag.kind === 'tag') return; // the tag keyword itself
+    if (prev && prev.op === '|') {
+      tokens.push({ type: 'filter', name: t.id, start: t.s, end: t.e });
+      lastVar = null;
+      return;
+    }
+    if (prev && (prev.id === 'is' || (prev.id === 'not' && prev2 && prev2.id === 'is'))) {
+      tokens.push({ type: 'test', name: t.id, start: t.s, end: t.e });
+      return;
+    }
+    if (prev && prev.op === '.' && lastVar && lastVar.end === prev.s) {
+      lastVar.path.push(t.id);
+      lastVar.end = t.e;
+      return;
+    }
+    if (next && next.op === '=' && depth > 0) return; // keyword argument name
+    if (JINJA_WORDS.has(t.id)) {
+      lastVar = null;
+      return;
+    }
+    if ((defining === 'for' && !seenIn) || (defining === 'set' && !seenEq) || (defining === 'macro' && (k === 1 || depth > 0))) {
+      tokens.push({ type: 'def', name: t.id, start: t.s, end: t.e });
+      lastVar = null;
+      return;
+    }
+    lastVar = { type: 'var', path: [t.id], start: t.s, end: t.e };
+    tokens.push(lastVar);
+  });
+}
+
+function jinjaValuePreview(v) {
+  if (v === undefined) return '(not found)';
+  if (Array.isArray(v)) return `list of ${v.length}: ${tipPreview(JSON.stringify(v), 140)}`;
+  if (v && typeof v === 'object') {
+    const keys = Object.keys(v);
+    return `dict with ${keys.length} key${keys.length === 1 ? '' : 's'}: ${tipPreview(keys.join(', '), 120)}`;
+  }
+  return tipPreview(JSON.stringify(v), 160);
+}
+
+function walkPath(value, path) {
+  let v = value;
+  for (const p of path) {
+    if (v === null || v === undefined) return undefined;
+    if (Array.isArray(v) && /^\d+$/.test(p)) v = v[Number(p)];
+    else if (typeof v === 'object' && p in v) v = v[p];
+    else return undefined;
+  }
+  return v;
+}
+
+// Resolve a variable path at a template position: top-level variables, loop variables (shown
+// with the first item as an example), {% set %} names and macro parameters.
+function resolveJinjaPath(scan, context, path, index, depth = 0) {
+  const root = path[0];
+  const loop = scan.loops.filter((l) => index >= l.body.start && index < l.body.end && l.targets.includes(root)).pop();
+  if (loop && depth < 8) {
+    const iterPath = loop.iter.match(/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/) ? loop.iter.split('.') : null;
+    const iterable = iterPath ? resolveJinjaPath(scan, context, iterPath, loop.opener.start, depth + 1).value : undefined;
+    let first;
+    if (Array.isArray(iterable)) first = iterable[0];
+    else if (iterable && typeof iterable === 'object') first = Object.keys(iterable)[0];
+    const count = Array.isArray(iterable) ? iterable.length : iterable && typeof iterable === 'object' ? Object.keys(iterable).length : null;
+    const unpacked = loop.targets.length > 1 && Array.isArray(first) ? first[loop.targets.indexOf(root)] : first;
+    return {
+      kind: 'loop',
+      loop,
+      count,
+      value: first === undefined ? undefined : walkPath(unpacked, path.slice(1))
+    };
+  }
+  if (root === 'loop' && scan.loops.some((l) => index >= l.body.start && index < l.body.end)) return { kind: 'loophelper' };
+  const set = scan.sets.filter((s) => s.tag.start < index && s.name === root).pop();
+  if (set) return { kind: 'set', set };
+  const param = scan.params.find((p) => index >= p.body.start && index < p.body.end && p.names.includes(root));
+  if (param) return { kind: 'param' };
+  if (context && typeof context === 'object' && root in context) return { kind: 'context', value: walkPath(context, path) };
+  return { kind: 'unknown' };
+}
+
 // Wire the hover tooltips for one tool.
 function attachHoverFeatures(tool, inputs, outputEl) {
   if (tool.id === 'jinja2') {
@@ -1348,11 +1612,220 @@ function attachHoverFeatures(tool, inputs, outputEl) {
       if (active) outputEl.querySelectorAll(`.tl-seg[data-tl="${active}"]`).forEach((s) => s.classList.remove('tl-active'));
       active = null;
     };
+    // Template -> variable values, filter/test docs and matching block tags; plus a variables check.
+    const panel = outputEl.closest('.panel');
+    const template = inputs.template;
+    const stage = template.parentElement;
+    const blockLayer = document.createElement('pre');
+    blockLayer.className = 'regex-hover-layer';
+    blockLayer.setAttribute('aria-hidden', 'true');
+    stage.insertBefore(blockLayer, stage.firstChild);
+    template.addEventListener('scroll', () => {
+      blockLayer.scrollTop = template.scrollTop;
+      blockLayer.scrollLeft = template.scrollLeft;
+    });
+    const checkBox = document.createElement('div');
+    checkBox.className = 'regex-portability j2-check';
+    checkBox.hidden = true;
+    panel.querySelector('.grid').after(checkBox);
+
+    let lastContext = null;
+    let reference = { filters: {}, tests: {} };
+    loadJinjaReference().then((ref) => {
+      reference = ref;
+    });
+    let scanCache = { text: null, scan: null };
+    const scanFor = () => {
+      if (scanCache.text !== template.value) scanCache = { text: template.value, scan: scanJinjaTemplate(template.value) };
+      return scanCache.scan;
+    };
+    const contextNow = () => {
+      if (lastContext) return lastContext;
+      if (inputs.variables_format.value === 'json') {
+        try {
+          return JSON.parse(inputs.variables.value);
+        } catch (err) {
+          return null;
+        }
+      }
+      return null;
+    };
+    const lineAt = (index) => template.value.slice(0, index).split('\n').length;
+
+    // The k-th {{ expression }} on a template line, skipping output captured by macro/set/call/filter blocks
+    // (the server numbers expressions the same way).
+    const outputExpression = (line, ordinal) => {
+      const scan = scanFor();
+      const captured = scan.groups
+        .filter((g) => g.closed && (['macro', 'call', 'filter'].includes(g.keyword) || (g.keyword === 'set')))
+        .map((g) => [g.members[0].end, g.members[g.members.length - 1].start]);
+      const exprs = scan.tags.filter((t) => t.kind === 'expr' && lineAt(t.start) === line
+        && !captured.some(([a, b]) => t.start >= a && t.start < b));
+      const tag = exprs[ordinal];
+      return tag ? template.value.slice(tag.start, tag.end) : null;
+    };
+
+    // Variables box: keys the template uses (blue) or never uses (amber).
+    const varsOverlay = attachOverlay(inputs.variables);
+    let usageKeys = [];
+    const renderUsage = (usage) => {
+      const text = inputs.variables.value;
+      if (!usage || !Array.isArray(usage.keys)) {
+        usageKeys = [];
+        varsOverlay.plain();
+        return;
+      }
+      const toUnit = codePointToUnitMapper(text);
+      usageKeys = usage.keys.map((k) => ({ ...k, start: toUnit(k.start), end: toUnit(k.end) }));
+      varsOverlay.render(rangesToHtml(text, usageKeys.map((k) => ({ start: k.start, end: k.end, cls: k.used ? 'var-used' : 'var-unused' }))));
+    };
+    inputs.variables.addEventListener('input', () => {
+      usageKeys = [];
+    });
+    attachTextareaHover(inputs.variables, (index) => {
+      const key = usageKeys.find((k) => index >= k.start && index < k.end);
+      if (!key) return null;
+      const path = key.path.map((p, n) => (typeof p === 'number' ? `[${p}]` : n ? `.${p}` : p)).join('');
+      return `<div class="regex-tip-title"><code>${escapeTip(path)}</code></div>`
+        + (key.used
+          ? `<div>Used by the template${key.lines.length ? ` on line${key.lines.length > 1 ? 's' : ''} ${escapeTip(key.lines.join(', '))}` : ''}.</div>`
+          : '<div class="tip-warn">Not used by the template.</div>');
+    });
+    const clearBlocks = () => {
+      blockLayer.innerHTML = '';
+    };
+    const showBlocks = (ranges) => {
+      blockLayer.innerHTML = rangesToHtml(template.value, ranges.map((r) => ({ ...r, cls: 'rx-hover' }))) + '\n';
+      blockLayer.scrollTop = template.scrollTop;
+      blockLayer.scrollLeft = template.scrollLeft;
+    };
+    const jumpToLine = (line) => {
+      const lines = template.value.split('\n');
+      const start = lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0);
+      template.focus();
+      template.setSelectionRange(start, start + (lines[line - 1] || '').length);
+      const lh = Number.parseFloat(getComputedStyle(template).lineHeight) || 20;
+      template.scrollTop = Math.max(0, (line - 3) * lh);
+    };
+
+    const describeBlock = (tag) => {
+      const g = tag.group;
+      const kw = g.keyword;
+      const lines = g.members.map((m) => `${m.keyword} line ${lineAt(m.start)}`).join(' \u2192 ');
+      if (g.stray) {
+        return `<div class="regex-tip-title tip-error">{% ${escapeTip(kw)} %} has no matching opening tag</div>`
+          + (g.expected ? `<div class="tip-note">The innermost open block here is {% ${escapeTip(g.expected)} %}.</div>` : '');
+      }
+      const head = { for: 'for loop', if: 'if block', macro: 'macro', call: 'call block', filter: 'filter block', set: 'set block (captures the text)', with: 'with block', block: 'block', autoescape: 'autoescape block', raw: 'raw block (not rendered as Jinja)' }[kw] || kw;
+      let extra = '';
+      if (kw === 'for') {
+        const loop = scanFor().loops.find((l) => l.opener === g.members[0]);
+        extra = loop ? `<div>Loops over <code>${escapeTip(loop.iter)}</code> as <code>${escapeTip(loop.targets.join(', '))}</code>; <code>loop.index</code>, <code>loop.first</code>, <code>loop.last</code> \u2026 are available inside.</div>` : '';
+      }
+      return `<div class="regex-tip-title">${escapeTip(head)}</div><div>${escapeTip(lines)}</div>${extra}`
+        + (g.closed ? '' : `<div class="tip-error">No matching {% end${escapeTip(kw)} %} found.</div>`);
+    };
+
+    const describeVar = (token, index) => {
+      const scan = scanFor();
+      const path = token.path.join('.');
+      const r = resolveJinjaPath(scan, contextNow(), token.path, index);
+      let body = '';
+      if (r.kind === 'context') {
+        body = `<div>From your variables: <code>${escapeTip(jinjaValuePreview(r.value))}</code></div>`;
+        if (r.value === undefined) body = '<div class="tip-error">Not found in your variables (renders empty in NetBox mode, fails otherwise).</div>';
+      } else if (r.kind === 'loop') {
+        const line = lineAt(r.loop.opener.start);
+        const example = r.value === undefined
+          ? (r.count === 0 ? '<div class="tip-note">The list is empty, so the loop body never runs.</div>' : '<div class="tip-note">No value on the first item.</div>')
+          : `<div>First item: <code>${escapeTip(jinjaValuePreview(r.value))}</code></div>`;
+        body = `<div>Loop variable from line ${line}: <code>for ${escapeTip(r.loop.targets.join(', '))} in ${escapeTip(r.loop.iter)}</code>${r.count !== null ? ` (${r.count} item${r.count === 1 ? '' : 's'})` : ''}</div>${example}`;
+      } else if (r.kind === 'loophelper') {
+        const help = JINJA_LOOP_HELP[token.path[1]];
+        body = `<div>${escapeTip(help || 'The loop helper inside a for loop: loop.index, loop.first, loop.last, loop.length, ...')}</div>`;
+      } else if (r.kind === 'set') {
+        body = `<div>Set by <code>{% set %}</code> on line ${lineAt(r.set.tag.start)}.</div>`;
+      } else if (r.kind === 'param') {
+        body = '<div>A macro parameter.</div>';
+      } else {
+        const netbox = inputs.netbox_mode && inputs.netbox_mode.checked && ['circuits', 'core', 'dcim', 'extras', 'ipam', 'tenancy', 'users', 'virtualization', 'vpn', 'wireless', 'device', 'virtualmachine'].includes(token.path[0]);
+        body = netbox
+          ? '<div class="tip-note">Supplied by NetBox when the template renders there; not available in this tool.</div>'
+          : '<div class="tip-error">Not in your variables.</div>';
+      }
+      return `<div class="regex-tip-title"><code>${escapeTip(path)}</code></div>${body}`;
+    };
+
+    const describeFilterOrTest = (token) => {
+      const isFilter = token.type === 'filter';
+      const info = (isFilter ? reference.filters : reference.tests)[token.name];
+      if (!info) {
+        return `<div class="regex-tip-title"><code>${escapeTip(token.name)}</code></div><div class="tip-error">Unknown ${isFilter ? 'filter' : 'test'}: Jinja will fail with "No ${isFilter ? 'filter' : 'test'} named '${escapeTip(token.name)}'".</div>`;
+      }
+      return `<div class="regex-tip-title"><code>${isFilter ? '| ' : 'is '}${escapeTip(token.name)}${escapeTip(info.signature)}</code></div><div>${escapeTip(info.doc)}</div>`;
+    };
+
+    attachTextareaHover(template, (index) => {
+      const scan = scanFor();
+      const token = scan.tokens.filter((t) => index >= t.start && index < t.end).pop();
+      if (token && token.type !== 'def') {
+        const tag = scan.tags.find((t) => index >= t.start && index < t.end);
+        if (tag && tag.group) showBlocks(tag.group.members);
+        else clearBlocks();
+        return token.type === 'var' ? describeVar(token, index) : describeFilterOrTest(token);
+      }
+      const tag = scan.tags.find((t) => index >= t.start && index < t.end);
+      if (tag && tag.group) {
+        showBlocks(tag.group.members);
+        return describeBlock(tag);
+      }
+      clearBlocks();
+      return null;
+    });
+    template.addEventListener('mouseleave', clearBlocks);
+    template.addEventListener('input', clearBlocks);
+
+    const renderCheck = (check) => {
+      if (!check) {
+        checkBox.hidden = true;
+        return;
+      }
+      const items = [];
+      (check.missing || []).forEach((m) => items.push({ level: 'error', line: m.line, text: `${m.line ? `Line ${m.line}: ` : ''}${m.message}${m.kind === 'loop' ? ' (looped over)' : ''}` }));
+      if (check.probe_error && !(check.missing || []).length) items.push({ level: 'error', line: check.probe_error.line, text: `${check.probe_error.line ? `Line ${check.probe_error.line}: ` : ''}${check.probe_error.message}` });
+      if ((check.netbox || []).length) items.push({ level: 'warn', text: `Supplied by NetBox when rendered there (not available here): ${check.netbox.join(', ')}` });
+      const unused = (usageNow && usageNow.unused) || check.unused || [];
+      if (unused.length) items.push({ level: 'warn', text: `Provided but not used by the template: ${unused.join(', ')}` });
+      if ((check.not_provided || []).length) items.push({ level: 'ok', text: `Not provided, and handled by the template (if / default / is defined): ${check.not_provided.join(', ')}` });
+      if (!items.some((i) => i.level !== 'ok')) items.unshift({ level: 'ok', text: 'Every variable the template uses is provided.' });
+      const icons = { ok: '\u2713', warn: '!', error: '\u2717' };
+      checkBox.hidden = false;
+      const legend = '<span class="j2-legend"><span class="var-used">used</span> <span class="var-unused">not used</span> in Variables \u00b7 <span class="tl-expr">from a variable</span> in the output</span>';
+      checkBox.innerHTML = `<div class="rp-title">Variables check ${legend}</div><ul class="rp-list">${items.map((it) => `
+        <li class="rp-item rp-${it.level}${it.line ? ' j2-jump' : ''}"${it.line ? ` data-line="${it.line}" title="Show line ${it.line} in the template"` : ''}>
+          <span class="rp-icon" aria-hidden="true">${icons[it.level]}</span>
+          <div class="rp-body">${escapeHtml(it.text)}${it.line ? `<div class="rp-summary"><code>${escapeHtml(tipPreview((template.value.split('\n')[it.line - 1] || '').trim(), 120))}</code></div>` : ''}</div>
+        </li>`).join('')}</ul>`;
+    };
+    checkBox.addEventListener('click', (event) => {
+      const item = event.target.closest && event.target.closest('.j2-jump');
+      if (item) jumpToLine(Number(item.dataset.line));
+    });
+
+    let usageNow = null;
     toolResultHooks.jinja2 = (data) => {
       clearActive();
+      lastContext = data && data.context && typeof data.context === 'object' ? data.context : null;
+      usageNow = data && data.usage;
+      renderUsage(usageNow);
+      renderCheck(data && data.inspect);
       if (!data || !data.ok || !Array.isArray(data.segments)) return;
       outputEl.innerHTML = data.segments
-        .map(([line, text]) => (line ? `<span class="tl-seg" data-tl="${line}">${escapeHtml(text)}</span>` : escapeHtml(text)))
+        .map(([line, text, ordinal]) => {
+          if (!line) return escapeHtml(text);
+          const expr = ordinal !== null && ordinal !== undefined;
+          return `<span class="tl-seg${expr ? ' tl-expr' : ''}" data-tl="${line}"${expr ? ` data-ord="${ordinal}"` : ''}>${escapeHtml(text)}</span>`;
+        })
         .join('');
     };
     outputEl.addEventListener('mousemove', (event) => {
@@ -1369,10 +1842,14 @@ function attachHoverFeatures(tool, inputs, outputEl) {
         outputEl.querySelectorAll(`.tl-seg[data-tl="${line}"]`).forEach((s) => s.classList.add('tl-active'));
       }
       const source = (inputs.template.value.split('\n')[Number(line) - 1] || '').trim();
-      sharedTip.show(event.clientX, event.clientY, `
-        <div class="regex-tip-title">Template line ${escapeTip(line)}</div>
-        <div><code>${escapeTip(tipPreview(source, 120))}</code></div>
-        <div class="tip-note">Everything highlighted in the output came from this line.</div>`);
+      const expr = seg.dataset.ord !== undefined ? outputExpression(Number(line), Number(seg.dataset.ord)) : null;
+      sharedTip.show(event.clientX, event.clientY, expr
+        ? `<div class="regex-tip-title">From <code>${escapeTip(tipPreview(expr, 100))}</code></div>
+           <div>Template line ${escapeTip(line)}: <code>${escapeTip(tipPreview(source, 100))}</code></div>
+           <div class="tip-note">Text from an expression or variable is highlighted in the output.</div>`
+        : `<div class="regex-tip-title">Template line ${escapeTip(line)}</div>
+           <div><code>${escapeTip(tipPreview(source, 120))}</code></div>
+           <div class="tip-note">Literal template text. Everything highlighted came from this line.</div>`);
     });
     outputEl.addEventListener('mouseleave', () => {
       clearActive();

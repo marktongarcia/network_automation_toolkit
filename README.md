@@ -10,7 +10,7 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 
 ## Feature Set
 
-- `J2 Renderer` (Jinja2 template rendering, with an optional NetBox mode)
+- `J2 Renderer` (Jinja2 template rendering, with an optional NetBox mode, a variables check that finds typos and unused variables, and hover help on variables, filters and block tags)
 - `Regex Tester` (Python `re`, with a token-by-token explanation, hover highlighting on the pattern, flags, named groups, replace preview, and a portability check for `grep -E`/`grep -P` and Cisco IOS/IOS-XE)
 - `TextFSM Parser` for structured extraction from CLI output
 - `Data Format Converter` (`JSON <-> XML <-> YAML`)
@@ -23,7 +23,7 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 - `Base64 Utility`
 - Theme selector with `Sand`, `Solarized`, `Light`, and `Dark` palettes (saved in browser)
 - `Ctrl+Enter` runs the current tool, a `Copy` button on every output, searchable cheatsheets, and the last-used tab is remembered
-- Hover tooltips: J2 output shows the template line that produced it; TextFSM input shows the matching rule and captured Values; JSON Schema underlines every error in the data; JMESPath and XPath data show the path to the hovered value
+- Hover tooltips: J2 output highlights text that came from a variable and shows the exact `{{ expression }}` and template line; the Variables box marks keys the template uses or never uses; TextFSM input shows the matching rule and captured Values; JSON Schema underlines every error in the data; JMESPath and XPath data show the path to the hovered value
 
 ## Python Playground Highlights
 

@@ -307,8 +307,8 @@ def test_jinja2_segments_map_output_to_template_lines(client):
     for netbox in (False, True):
         data = post(client, "/api/jinja2", template=template, variables='{"h": "r1", "ifs": ["a", "b"]}', netbox_mode=netbox)
         segments = data["segments"]
-        assert "".join(text for _, text in segments) == data["result"]
-        by_text = {text.strip(): line for line, text in segments if text.strip()}
+        assert "".join(text for _, text, _ in segments) == data["result"]
+        by_text = {text.strip(): line for line, text, _ in segments if text.strip()}
         assert by_text["!"] == 2
         assert by_text["uplink"] == 4
         assert by_text["access"] == 5  # the else branch, not the if line
@@ -347,3 +347,67 @@ def test_xpath_nodes_for_highlighting(client):
     assert data["nodes"] == [{"element": 1, "kind": "element"}, {"element": 3, "kind": "element"}]
     counted = post(client, "/api/xpath", xml=xml, xpath="count(//i)")
     assert counted["results"] == ["2.0"] and counted["nodes"] == []
+
+
+# --- J2 variables check and reference -----------------------------------------------------
+
+def test_jinja2_variables_check(client):
+    template = (
+        "hostname {{ hostname }}\n"
+        "{% for i in interfaces %}\n"
+        " description {{ i.descripton }}\n"        # typo: reported with its line
+        "{% if i.shutdown %} shutdown{% endif %}\n"  # optional: not reported
+        "{% endfor %}\n"
+        "{{ snmp }}{{ banner | default('none') }}{% if extra is defined %}x{% endif %}"
+    )
+    variables = '{"hostname": "r1", "interfaces": [{"description": "a"}], "unused_var": 1}'
+    for netbox in (False, True):
+        data = post(client, "/api/jinja2", template=template, variables=variables, netbox_mode=netbox)
+        check = data["inspect"]
+        messages = {(m["line"], m["message"]) for m in check["missing"]}
+        assert (3, "'dict object' has no attribute 'descripton'") in messages
+        assert (6, "'snmp' is undefined") in messages
+        assert len(messages) == 2
+        assert check["not_provided"] == ["banner", "extra"]
+        assert check["unused"] == ["unused_var"]
+        assert data["context"]["hostname"] == "r1"
+    # Default mode still fails on the first undefined value, but the check lists them all.
+    strict = post(client, "/api/jinja2", template=template, variables=variables)
+    assert strict["ok"] is False and len(strict["inspect"]["missing"]) == 2
+
+
+def test_jinja2_variables_check_netbox_names(client):
+    data = post(client, "/api/jinja2", template="{{ device.name }}{% for p in ipam.Prefix.objects.all() %}{% endfor %}",
+                variables="{}", netbox_mode=True)
+    assert data["inspect"]["netbox"] == ["device", "ipam"]
+
+
+def test_jinja2_reference(client):
+    ref = client.get("/api/jinja2/reference").get_json()
+    assert ref["filters"]["default"]["signature"] == "(default_value='', boolean=False)"
+    assert "undefined" in ref["filters"]["default"]["doc"]
+    assert "env" in ref["filters"] and "defined" in ref["tests"]
+
+
+def test_jinja2_segments_mark_expressions(client):
+    template = "host {{ h }}-{{ s | upper }}\n{% if x %}{{ a }}{% else %}{{ b }}{% endif %}"
+    data = post(client, "/api/jinja2", template=template, variables='{"h": "r1", "s": "lab", "x": false, "b": "B"}', netbox_mode=True)
+    assert data["segments"] == [[1, "host ", None], [1, "r1", 0], [1, "-", None], [1, "LAB", 1], [1, "\n", None], [2, "B", 1]]
+
+
+def test_jinja2_variable_usage(client):
+    template = "{{ hostname }}\n{% for i in interfaces %}{{ i.name }}{% endfor %}\n{{ interfaces | map(attribute='ip') | join }}"
+    variables = '{"hostname": "r1", "spare": 1, "interfaces": [{"name": "Gi0", "ip": "x", "description": "d"}]}'
+    for netbox in (False, True):
+        usage = post(client, "/api/jinja2", template=template, variables=variables, netbox_mode=netbox)["usage"]
+        status = {".".join(map(str, k["path"])): (k["used"], k["lines"]) for k in usage["keys"]}
+        assert status["hostname"] == (True, [1])
+        assert status["spare"] == (False, [])
+        assert status["interfaces.0.name"] == (True, [2])
+        assert status["interfaces.0.ip"] == (True, [3])
+        assert status["interfaces.0.description"] == (False, [])
+        assert usage["unused"] == ["spare", "interfaces[].description"]
+        k = next(k for k in usage["keys"] if k["path"] == ["spare"])
+        assert variables[k["start"]:k["end"]] == '"spare"'
+    yaml_usage = post(client, "/api/jinja2", template="{{ a.b }}", variables="a:\n  b: 1\n  c: 2\n", variables_format="yaml")["usage"]
+    assert [(k["path"], k["used"]) for k in yaml_usage["keys"]] == [(["a"], True), (["a", "b"], True), (["a", "c"], False)]
