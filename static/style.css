@@ -786,6 +786,47 @@ button.run.ghost {
   background: var(--surface);
 }
 
+.regex-cheatsheet.tool-about {
+  margin: 0 0 0.85rem;
+}
+
+.tool-about-content p {
+  margin: 0 0 0.6rem;
+}
+
+.tool-about-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.4rem 1.2rem;
+}
+
+.tool-about-cols h4 {
+  margin: 0.2rem 0 0.3rem;
+  font-size: 0.9rem;
+  color: var(--accent);
+}
+
+.tool-about-cols ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+}
+
+.tool-about-cols li {
+  margin-bottom: 0.25rem;
+}
+
+.tool-about-content .tool-about-docs {
+  margin: 0.6rem 0 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.tool-about-content a {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
 .regex-cheatsheet summary {
   cursor: pointer;
   padding: 0.55rem 0.7rem;

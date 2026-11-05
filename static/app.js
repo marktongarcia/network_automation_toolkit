@@ -559,6 +559,191 @@ function buildRegexTextHighlights(text, rawPattern) {
   };
 }
 
+// "Where it's used" panel per tool: what it is, where you meet it in practice, typical tasks, docs.
+const toolAbout = {
+  jinja2: {
+    what: 'Jinja2 is a text template engine: plain text with {{ variables }}, {% loops %} and {% if %} blocks, filled in from structured data.',
+    usedIn: [
+      'Ansible: the template module, and every {{ }} expression in playbooks and inventories',
+      'NetBox: config templates and export templates',
+      'Nornir (nornir_jinja2), Salt and many in-house Python scripts',
+      'Network vendors’ and DevOps tools that generate configs or reports from data'
+    ],
+    tasks: [
+      'Generate device configs (interfaces, VLANs, BGP, ACLs) from YAML or JSON variables',
+      'Check a template’s output before it goes into Ansible or NetBox',
+      'Build change-request snippets or documentation from inventory data'
+    ],
+    docs: 'https://jinja.palletsprojects.com/en/stable/templates/'
+  },
+  regex: {
+    what: 'Regular expressions describe text patterns. This tester uses Python’s re syntax.',
+    usedIn: [
+      'Python scripts (re module), and every parser below: TextFSM Value definitions are regexes',
+      'Ansible filters: regex_search, regex_replace, regex_findall',
+      'Device CLI: "show run | include", and BGP AS-path access-lists (Cisco IOS regex is close to, but not the same as, Python’s)',
+      'Log tools (syslog filters, Splunk, Graylog) and editors’ search and replace'
+    ],
+    tasks: [
+      'Pull interface names, IPs, MACs or serials out of CLI output',
+      'Build and debug the patterns used inside TextFSM templates',
+      'Match log lines or validate input formats (hostnames, VLAN ranges)'
+    ],
+    docs: 'https://docs.python.org/3/library/re.html'
+  },
+  textfsm: {
+    what: 'TextFSM (from Google) turns semi-structured CLI output into a table, using a template of regex Values and state rules.',
+    usedIn: [
+      'ntc-templates: a large community library of ready-made templates for show commands',
+      'Netmiko: send_command(..., use_textfsm=True) returns parsed data',
+      'Ansible: ansible.utils.cli_parse (textfsm / ntc_templates parsers)',
+      'Nornir and many Python network scripts'
+    ],
+    tasks: [
+      'Parse "show ip interface brief", "show version", "show cdp neighbors" into rows',
+      'Write or fix a template when ntc-templates has none for your command or platform',
+      'Feed parsed output into checks, reports or a source of truth'
+    ],
+    docs: 'https://github.com/google/textfsm/wiki/TextFSM'
+  },
+  convert: {
+    what: 'Converts the same data between JSON, YAML and XML.',
+    usedIn: [
+      'Ansible vars and inventories are YAML; REST APIs (NetBox, Meraki, controllers) speak JSON',
+      'NETCONF and some device outputs are XML (Junos "| display xml", NX-OS "| xml")',
+      'NetBox config contexts and Kubernetes manifests (JSON vs YAML)'
+    ],
+    tasks: [
+      'Turn an API JSON response into YAML vars for Ansible or the J2 Renderer',
+      'Turn XML from NETCONF or a device into JSON to query it with JMESPath',
+      'Check that a YAML file parses the way you expect'
+    ],
+    docs: 'https://yaml.org/spec/1.2.2/'
+  },
+  jmespath: {
+    what: 'JMESPath is a query language for JSON: pick fields, filter lists and reshape data with one expression.',
+    usedIn: [
+      'AWS CLI and Azure CLI: the --query option',
+      'Ansible: the json_query filter (community.general collection)',
+      'Python: the jmespath library, used to filter REST API responses (NetBox, Meraki, DNA Center, RESTCONF)'
+    ],
+    tasks: [
+      'Get just the names and IPs out of a long API response',
+      'Filter a list, e.g. interfaces where enabled is true',
+      'Prototype the json_query expression for an Ansible playbook'
+    ],
+    docs: 'https://jmespath.org/tutorial.html'
+  },
+  'python-playground': {
+    what: 'A persistent Python session with var1-var3 preloaded, for quick experiments.',
+    usedIn: [
+      'Prototyping the logic of a script, Nornir task or Ansible custom filter before writing it properly',
+      'Standard modules ready to use: ipaddress, json, re, collections, itertools'
+    ],
+    tasks: [
+      'Subnet maths with ipaddress (hosts in a /26, does an IP belong to a prefix)',
+      'Transform parsed or API data (sort, group, filter) before it goes into a template',
+      'Try a regex or a comprehension against real sample data'
+    ],
+    docs: 'https://docs.python.org/3/library/ipaddress.html'
+  },
+  ttp: {
+    what: 'TTP (Template Text Parser) parses text with templates that look like the text itself, with {{ placeholders }} where values go.',
+    usedIn: [
+      'Netmiko: send_command(..., use_ttp=True, ttp_template=...)',
+      'Ansible: ansible.utils.cli_parse (ttp parser)',
+      'Nornir (nornir_salt) and Python scripts'
+    ],
+    tasks: [
+      'Parse running-config sections (interfaces, BGP neighbours) into nested data',
+      'Parse output that is too irregular for a TextFSM table',
+      'Turn existing configs into structured data for a source of truth'
+    ],
+    docs: 'https://ttp.readthedocs.io/'
+  },
+  xpath: {
+    what: 'XPath selects nodes in an XML document by path and condition.',
+    usedIn: [
+      'NETCONF: XPath filters in get / get-config (where the device supports the :xpath capability), e.g. with ncclient',
+      'YANG models: "when" and "must" statements are XPath expressions',
+      'XML device output (Junos "| display xml", NX-OS "| xml") and Python lxml'
+    ],
+    tasks: [
+      'Find enabled interfaces or specific leaves in a NETCONF reply',
+      'Write the filter expression before putting it into a script',
+      'Extract values from XML exports'
+    ],
+    docs: 'https://developer.mozilla.org/en-US/docs/Web/XPath'
+  },
+  'json-schema': {
+    what: 'JSON Schema describes the expected shape of JSON data (required keys, types, allowed values), so data can be validated automatically.',
+    usedIn: [
+      'Ansible: ansible.utils.validate with the jsonschema engine',
+      'OpenAPI specs (e.g. the NetBox REST API schema) describe payloads with JSON Schema',
+      'CI pipelines that check inventory or source-of-truth data before a deployment'
+    ],
+    tasks: [
+      'Make sure every device in your vars has a hostname, mgmt IP and a valid role',
+      'Catch typos and wrong types in YAML/JSON before they reach a template',
+      'Document what an automation expects as input'
+    ],
+    docs: 'https://json-schema.org/learn/getting-started-step-by-step'
+  },
+  'data-model': {
+    what: 'Generates a starting JSON Schema or Pydantic model from sample data, then validates other data against it.',
+    usedIn: [
+      'Pydantic models in Python tools and APIs (e.g. FastAPI) to type and validate data',
+      'JSON Schema for the validation uses listed under JSON Schema Validator'
+    ],
+    tasks: [
+      'Bootstrap a model from a real API response instead of writing it by hand',
+      'Detect drift: does today’s payload still match yesterday’s shape?',
+      'Start typed code for scripts that consume API data'
+    ],
+    docs: 'https://docs.pydantic.dev/latest/concepts/models/'
+  },
+  base64: {
+    what: 'Base64 encodes binary or text data as plain ASCII. It is an encoding, not encryption: anyone can decode it.',
+    usedIn: [
+      'HTTP Basic authentication: the Authorization header carries base64(user:password)',
+      'Certificates and keys: the body of a PEM file is base64',
+      'Kubernetes secrets, cloud-init user-data, and APIs that return file contents (e.g. GitHub)'
+    ],
+    tasks: [
+      'Decode a Basic auth header or a Kubernetes secret while troubleshooting',
+      'Encode a small config or script for an API that expects base64',
+      'Check what an opaque base64 string in a payload actually contains'
+    ],
+    docs: 'https://developer.mozilla.org/en-US/docs/Glossary/Base64'
+  }
+};
+
+function createToolAbout(toolId) {
+  const about = toolAbout[toolId];
+  if (!about) return null;
+
+  const wrap = document.createElement('details');
+  wrap.className = 'regex-cheatsheet tool-about';
+
+  const summary = document.createElement('summary');
+  summary.textContent = 'Where it’s used';
+  wrap.appendChild(summary);
+
+  const list = (items) => `<ul>${items.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>`;
+  const content = document.createElement('div');
+  content.className = 'regex-cheatsheet-content tool-about-content';
+  content.innerHTML = `
+    <p>${escapeHtml(about.what)}</p>
+    <div class="tool-about-cols">
+      <div><h4>You’ll meet it in</h4>${list(about.usedIn)}</div>
+      <div><h4>Typical tasks</h4>${list(about.tasks)}</div>
+    </div>
+    <p class="tool-about-docs">Docs: <a href="${escapeHtml(about.docs)}" target="_blank" rel="noopener noreferrer">${escapeHtml(about.docs)}</a></p>
+  `;
+  wrap.appendChild(content);
+  return wrap;
+}
+
 const toolCheatsheetRows = {
   xpath: [
     ['Path Basics', '//node', 'Search anywhere in document', '//interface/name'],
@@ -1449,6 +1634,10 @@ function init() {
     panel.querySelector('.desc').textContent = tool.description;
     panel.querySelector('.usecase').textContent = tool.useCase || '';
     panel.querySelector('.chooser').textContent = tool.chooser || '';
+    const about = createToolAbout(tool.id);
+    if (about) {
+      panel.querySelector('.chooser').after(about);
+    }
 
     const inputs = {};
     const grid = panel.querySelector('.grid');
