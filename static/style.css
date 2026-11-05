@@ -1161,6 +1161,119 @@ button.run.ghost {
   margin: 0.45rem 0;
 }
 
+/* Regex explanation box and pattern hover. */
+.regex-explain {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.regex-explain summary {
+  cursor: pointer;
+  padding: 0.5rem 0.7rem;
+  font-weight: 700;
+}
+
+.rx-rows {
+  max-height: 320px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 0.4rem 0.45rem 0.5rem;
+  font-size: 0.88rem;
+}
+
+.rx-summary {
+  margin: 0 0 0.35rem 0.35rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.rx-problems {
+  margin: 0 0 0.4rem 0.35rem;
+  color: var(--error);
+  font-weight: 600;
+}
+
+.rx-empty {
+  padding: 0.3rem 0.35rem;
+  color: var(--muted);
+}
+
+.rx-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding-top: 0.16rem;
+  padding-bottom: 0.16rem;
+  padding-right: 0.35rem;
+  border-radius: 6px;
+}
+
+.rx-row.rx-active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.rx-token {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  padding: 0 0.35rem;
+  border-radius: 4px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--syn-keyword);
+}
+
+.rx-token.rx-gchip {
+  border-left: 3px solid;
+}
+
+.rx-token-note {
+  font-family: inherit;
+  font-size: 0.78rem;
+  color: #d97706;
+}
+
+.rx-desc {
+  min-width: 0;
+}
+
+.rx-row.rx-error .rx-desc {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.rx-row.rx-warn .rx-desc {
+  color: #d97706;
+}
+
+.regex-hover-layer {
+  grid-area: 1 / 1;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  line-height: 1.45;
+  white-space: pre;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+}
+
+.rx-hover {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.rgx-group-focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
 .regex-live-status {
   margin: 0.45rem 0 0;
   font-size: 0.86rem;

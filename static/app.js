@@ -544,6 +544,420 @@ function renderRegexPortability(container, report) {
   container.appendChild(list);
 }
 
+// ---- Regex explanation (Python re syntax) -----------------------------------------------
+
+const RX_ESCAPES = {
+  d: 'A digit (0-9, plus other Unicode digits unless the a flag is set)',
+  D: 'Any character that is not a digit',
+  w: 'A word character: letter, digit or underscore',
+  W: 'Any character that is not a word character',
+  s: 'A whitespace character (space, tab, newline, ...)',
+  S: 'Any character that is not whitespace',
+  b: 'A word boundary: between a word character and a non-word character (or the start/end)',
+  B: 'Not a word boundary',
+  A: 'The start of the string (only there, even with the m flag)',
+  Z: 'The end of the string (only there, even with the m flag)',
+  n: 'A newline (line feed)',
+  t: 'A tab',
+  r: 'A carriage return',
+  f: 'A form feed',
+  v: 'A vertical tab',
+  a: 'The bell character (BEL)'
+};
+
+const RX_FLAG_NAMES = {
+  a: 'a (ASCII-only \\w \\d \\s)',
+  i: 'i (ignore case)',
+  L: 'L (locale)',
+  m: 'm (^ and $ per line)',
+  s: 's (dot matches newline)',
+  u: 'u (Unicode)',
+  x: 'x (verbose)'
+};
+
+function showChar(c) {
+  if (c === ' ') return 'a space';
+  if (c === '\t') return 'a tab';
+  if (c === '\n') return 'a newline';
+  return `"${c}"`;
+}
+
+/**
+ * Parse a Python regex into a tree of nodes {type, start, end, desc, children, quant?, group?}.
+ * Best effort: on a syntax problem it records an error and keeps going, so the explanation
+ * still covers the rest of the pattern.
+ */
+function explainRegex(pattern, flagString) {
+  const p = pattern;
+  let i = 0;
+  let groupNo = 0;
+  const groupNames = {};
+  const errors = [];
+  const flags = new Set((flagString || '').split(''));
+  const lead = p.match(/^\(\?([aiLmsux]+)\)/);
+  if (lead) lead[1].split('').forEach((f) => flags.add(f));
+
+  const mk = (type, start, end, desc, extra = {}) => ({ type, start, end, desc, children: [], ...extra });
+  const fail = (message, start, end) => {
+    errors.push({ message, start, end });
+    return mk('error', start, end, message, { error: true });
+  };
+  const caseNote = () => (flags.has('i') ? ' (case-insensitive)' : ' (case-sensitive)');
+  const nodeEnd = (n) => (n.quant ? n.quant.end : n.end);
+
+  function parseEscape(inClass) {
+    const start = i;
+    const c = p[i + 1];
+    if (c === undefined) {
+      i += 1;
+      return fail('The pattern ends with a backslash: nothing to escape', start, i);
+    }
+    if (c === '0' || (inClass && /[0-7]/.test(c)) || (/[0-7]/.test(c) && /^[0-7]{3}/.test(p.slice(i + 1)))) {
+      const m = p.slice(i + 1).match(/^[0-7]{1,3}/)[0];
+      i += 1 + m.length;
+      const ch = String.fromCharCode(parseInt(m, 8));
+      return mk('literal', start, i, '', { value: ch, label: `Octal escape: the character with code ${parseInt(m, 8)}` });
+    }
+    if (/[1-9]/.test(c) && !inClass) {
+      const m = p.slice(i + 1).match(/^[0-9]{1,2}/)[0];
+      i += 1 + m.length;
+      const n = Number(m);
+      if (n > groupNo) return fail(`Backreference \\${n} refers to group ${n}, which does not exist (yet)`, start, i);
+      return mk('backref', start, i, `Backreference: matches exactly the text that group ${n} matched`, { refGroup: n });
+    }
+    const hex = { x: 2, u: 4, U: 8 }[c];
+    if (hex) {
+      const m = p.slice(i + 2, i + 2 + hex);
+      i += 2 + hex;
+      if (!new RegExp(`^[0-9a-fA-F]{${hex}}$`).test(m)) return fail(`\\${c} needs exactly ${hex} hex digits`, start, i);
+      const code = parseInt(m, 16);
+      const ch = code <= 0x10ffff ? String.fromCodePoint(code) : '?';
+      return mk('literal', start, i, '', { value: ch, label: `Hex escape: the character U+${code.toString(16).toUpperCase().padStart(4, '0')}` });
+    }
+    if (c === 'N' && p[i + 2] === '{') {
+      const close = p.indexOf('}', i + 3);
+      i = close === -1 ? p.length : close + 1;
+      return mk('literal', start, i, `A character by its Unicode name: ${p.slice(start + 3, i - 1)}`, { value: '?' });
+    }
+    i += 2;
+    if (inClass && c === 'b') return mk('literal', start, i, '', { value: '\b', label: 'A backspace character' });
+    if (inClass && 'ABZ'.includes(c)) return fail(`\\${c} is not allowed inside a character set`, start, i);
+    if (RX_ESCAPES[c]) {
+      const charLike = 'ntrfva'.includes(c);
+      if (charLike) return mk('literal', start, i, '', { value: { n: '\n', t: '\t', r: '\r', f: '\f', v: '\v', a: '\x07' }[c], label: RX_ESCAPES[c] });
+      const zeroWidth = 'bBAZ'.includes(c);
+      return mk(zeroWidth ? 'anchor' : 'set', start, i, RX_ESCAPES[c]);
+    }
+    if (/[A-Za-z]/.test(c)) return fail(`Bad escape \\${c}: Python rejects unknown letter escapes`, start, i);
+    return mk('literal', start, i, '', { value: c, label: `The character ${showChar(c)}, escaped so it is matched literally` });
+  }
+
+  function parseClass() {
+    const start = i;
+    i += 1;
+    const negated = p[i] === '^';
+    if (negated) i += 1;
+    const items = [];
+    let first = true;
+    let posixWarning = false;
+    while (i < p.length && (p[i] !== ']' || first)) {
+      first = false;
+      if (p.startsWith('[:', i)) posixWarning = true;
+      const s = i;
+      let left;
+      if (p[i] === '\\') {
+        left = parseEscape(true);
+      } else {
+        left = mk('literal', s, i + 1, '', { value: p[i] });
+        i += 1;
+      }
+      if (left.type === 'literal' && p[i] === '-' && p[i + 1] !== undefined && p[i + 1] !== ']') {
+        i += 1;
+        let right;
+        if (p[i] === '\\') {
+          right = parseEscape(true);
+        } else {
+          right = mk('literal', i, i + 1, '', { value: p[i] });
+          i += 1;
+        }
+        if (right.type !== 'literal') {
+          items.push(fail('A range needs a single character on both sides', s, i));
+        } else if (right.value.codePointAt(0) < left.value.codePointAt(0)) {
+          items.push(fail(`Bad range: "${left.value}" comes after "${right.value}"`, s, i));
+        } else {
+          items.push(mk('range', s, i, `A character in the range ${showChar(left.value)} to ${showChar(right.value)}${caseNote()}`));
+        }
+        continue;
+      }
+      if (left.type === 'literal') left.desc = left.label || `The character ${showChar(left.value)}`;
+      items.push(left);
+    }
+    let end;
+    if (i >= p.length) {
+      end = p.length;
+      errors.push({ message: 'Missing ] to close the character set', start, end: start + 1 });
+    } else {
+      i += 1;
+      end = i;
+    }
+    const node = mk('class', start, end, negated
+      ? 'Character set (negated): any single character that is NOT listed below'
+      : 'Character set: any single character listed below');
+    node.children = items;
+    if (posixWarning) {
+      node.children.unshift(mk('warn', start, end, 'Python does not support POSIX classes like [:digit:]: this is read as individual characters (Python warns "possible nested set"). Use \\d or [0-9].', { warn: true }));
+    }
+    return node;
+  }
+
+  function parseGroup() {
+    const start = i;
+    i += 1;
+    let node;
+    const saved = new Set(flags);
+    if (p[i] === '?') {
+      const rest = p.slice(i);
+      let m;
+      if (rest.startsWith('?:')) {
+        i += 2;
+        node = mk('group', start, start, 'Non-capturing group: groups the pattern without capturing it');
+      } else if ((m = rest.match(/^\?P<([^>]*)>/))) {
+        i += m[0].length;
+        groupNo += 1;
+        groupNames[m[1]] = groupNo;
+        node = mk('group', start, start, `Named capturing group "${m[1]}" (group ${groupNo})`, { group: groupNo });
+      } else if ((m = rest.match(/^\?P=([^)]*)\)/))) {
+        i += m[0].length;
+        if (!(m[1] in groupNames)) return fail(`Backreference to unknown group name "${m[1]}"`, start, i);
+        return mk('backref', start, i, `Backreference: matches exactly the text that group "${m[1]}" matched`, { refGroup: groupNames[m[1]] });
+      } else if (rest.startsWith('?=') || rest.startsWith('?!')) {
+        const neg = rest[1] === '!';
+        i += 2;
+        node = mk('look', start, start, neg
+          ? 'Negative lookahead: the text that follows must NOT match this (nothing is consumed)'
+          : 'Positive lookahead: the text that follows must match this (nothing is consumed)');
+      } else if (rest.startsWith('?<=') || rest.startsWith('?<!')) {
+        const neg = rest[2] === '!';
+        i += 3;
+        node = mk('look', start, start, neg
+          ? 'Negative lookbehind: the text just before must NOT match this (fixed width only)'
+          : 'Positive lookbehind: the text just before must match this (fixed width only)');
+      } else if ((m = rest.match(/^\?<([A-Za-z_]\w*)>/))) {
+        i += m[0].length;
+        groupNo += 1;
+        groupNames[m[1]] = groupNo;
+        errors.push({ message: 'Python does not support (?<name>...): use (?P<name>...)', start, end: i });
+        node = mk('group', start, start, `Named group "${m[1]}" in .NET/JavaScript/PCRE syntax: Python needs (?P<${m[1]}>...)`, { group: groupNo, error: true });
+      } else if (rest.startsWith('?#')) {
+        const close = p.indexOf(')', i);
+        i = close === -1 ? p.length : close + 1;
+        return mk('comment', start, i, 'Comment: ignored');
+      } else if (rest.startsWith('?>')) {
+        i += 2;
+        node = mk('group', start, start, 'Atomic group: once it has matched, the engine never backtracks into it (Python 3.11+)');
+      } else if ((m = rest.match(/^\?\(([^)]*)\)/))) {
+        i += m[0].length;
+        const ref = /^\d+$/.test(m[1]) ? `group ${m[1]}` : `group "${m[1]}"`;
+        node = mk('cond', start, start, `Conditional: if ${ref} matched, match the first alternative, otherwise the second`);
+      } else if ((m = rest.match(/^\?([aiLmsux]*)(?:-([imsx]*))?(:|\))/))) {
+        i += m[0].length;
+        const on = m[1].split('').filter(Boolean).map((f) => RX_FLAG_NAMES[f] || f);
+        const off = (m[2] || '').split('').filter(Boolean).map((f) => RX_FLAG_NAMES[f] || f);
+        if (m[3] === ')') {
+          if (start !== 0) return fail('Global inline flags like (?i) must be at the very start of the pattern (Python 3.11+)', start, i);
+          return mk('flags', start, i, `Inline flags for the whole pattern: ${on.join(', ')}`);
+        }
+        m[1].split('').forEach((f) => flags.add(f));
+        (m[2] || '').split('').forEach((f) => flags.delete(f));
+        node = mk('group', start, start, `Group with flags for this part only:${on.length ? ` on ${on.join(', ')}` : ''}${off.length ? `; off ${off.join(', ')}` : ''}`);
+      } else {
+        i += 1;
+        return fail('Unknown group type after (?', start, i);
+      }
+    } else {
+      groupNo += 1;
+      node = mk('group', start, start, `Capturing group ${groupNo}`, { group: groupNo });
+    }
+    node.children = parseAlternation(1);
+    if (p[i] === ')') {
+      i += 1;
+    } else {
+      errors.push({ message: 'Missing ) to close this group', start, end: start + 1 });
+    }
+    node.end = i;
+    flags.clear();
+    saved.forEach((f) => flags.add(f));
+    return node;
+  }
+
+  function parseQuantifier() {
+    const start = i;
+    const m = p.slice(i).match(/^(?:\*|\+|\?|\{(\d*)(,?)(\d*)\})/);
+    if (!m) return null;
+    if (m[0][0] === '{' && m[1] === '' && m[3] === '' && m[2] === '') return null;
+    i += m[0].length;
+    let count;
+    if (m[0] === '*') count = 'zero or more times';
+    else if (m[0] === '+') count = 'one or more times';
+    else if (m[0] === '?') count = 'zero or one time (optional)';
+    else if (!m[2]) count = `exactly ${m[1]} time${m[1] === '1' ? '' : 's'}`;
+    else if (m[3] === '') count = `${m[1] || 0} or more times`;
+    else count = `between ${m[1] || 0} and ${m[3]} times`;
+    let mode = 'as many times as possible, giving back as needed (greedy)';
+    if (p[i] === '?') {
+      mode = 'as few times as possible, expanding as needed (lazy)';
+      i += 1;
+    } else if (p[i] === '+') {
+      mode = 'as many times as possible, without giving back (possessive, Python 3.11+)';
+      i += 1;
+    }
+    if (m[1] && m[3] && Number(m[1]) > Number(m[3])) return fail(`Bad repeat {${m[1]},${m[3]}}: the minimum is larger than the maximum`, start, i);
+    const exact = m[0][0] === '{' && !m[2];
+    return mk('quant', start, i, `Quantifier: the previous token ${count}${exact ? '' : `, ${mode}`}`);
+  }
+
+  function parseAtom() {
+    const start = i;
+    const c = p[i];
+    if (flags.has('x')) {
+      if (/\s/.test(c)) {
+        i += 1;
+        return null;
+      }
+      if (c === '#') {
+        const nl = p.indexOf('\n', i);
+        i = nl === -1 ? p.length : nl;
+        return mk('comment', start, i, 'Comment: ignored (verbose mode)');
+      }
+    }
+    if (c === '(') return parseGroup();
+    if (c === '[') return parseClass();
+    if (c === '\\') return parseEscape(false);
+    i += 1;
+    if (c === '.') return mk('set', start, i, flags.has('s') ? 'Any character, including a newline (s flag)' : 'Any character except a newline');
+    if (c === '^') return mk('anchor', start, i, flags.has('m') ? 'The start of a line (m flag)' : 'The start of the string');
+    if (c === '$') return mk('anchor', start, i, flags.has('m') ? 'The end of a line (m flag)' : 'The end of the string (or just before a newline at the very end)');
+    if ('*+?'.includes(c)) return fail(`Nothing to repeat: the quantifier ${c} needs a token before it`, start, i);
+    if (c === '{' && /^\{\d*,?\d*\}/.test(p.slice(start)) && p.slice(start, start + 2) !== '{}') {
+      i = start;
+      parseQuantifier();
+      return fail('Nothing to repeat: this {} quantifier needs a token before it', start, i);
+    }
+    return mk('literal', start, i, '', { value: c });
+  }
+
+  function parseSequence(depth) {
+    const items = [];
+    while (i < p.length && p[i] !== '|' && !(p[i] === ')' && depth > 0)) {
+      if (p[i] === ')') {
+        items.push(fail('Unbalanced parenthesis: this ) has no matching (', i, i + 1));
+        i += 1;
+        continue;
+      }
+      const atom = parseAtom();
+      if (!atom) continue;
+      if (!['comment', 'flags', 'error'].includes(atom.type)) {
+        const q = parseQuantifier();
+        if (q) atom.quant = q;
+      }
+      const prev = items[items.length - 1];
+      if (atom.type === 'literal' && !atom.quant && !atom.label && prev && prev.type === 'literal' && !prev.quant && !prev.label) {
+        prev.value += atom.value;
+        prev.end = atom.end;
+        continue;
+      }
+      items.push(atom);
+    }
+    items.forEach((n) => {
+      if (n.type === 'literal') {
+        n.desc = n.label || (n.value.length > 1
+          ? `Matches the text "${n.value}" literally${caseNote()}`
+          : `Matches ${showChar(n.value)} literally${caseNote()}`);
+      }
+    });
+    return items;
+  }
+
+  function parseAlternation(depth) {
+    const start = i;
+    const branches = [parseSequence(depth)];
+    const bars = [];
+    while (p[i] === '|') {
+      bars.push(i);
+      i += 1;
+      branches.push(parseSequence(depth));
+    }
+    if (branches.length === 1) return branches[0];
+    const alt = mk('alt', start, i, `Alternation: matches one of ${branches.length} alternatives, tried left to right`);
+    alt.children = branches.map((items, k) => {
+      const s = items.length ? items[0].start : (k === 0 ? start : bars[k - 1] + 1);
+      const e = items.length ? nodeEnd(items[items.length - 1]) : s;
+      const b = mk('branch', s, e, items.length ? `Alternative ${k + 1}` : `Alternative ${k + 1}: empty (always matches)`);
+      b.children = items;
+      return b;
+    });
+    return [alt];
+  }
+
+  const tree = parseAlternation(0);
+  return { tree, errors, groupCount: groupNo, flags: Array.from(flags).join('') };
+}
+
+function flattenRegexTree(nodes, out = []) {
+  nodes.forEach((n) => {
+    out.push(n);
+    flattenRegexTree(n.children || [], out);
+    if (n.quant) out.push(n.quant);
+  });
+  return out;
+}
+
+// The smallest token under the cursor.
+function regexNodeAt(flat, index) {
+  let best = null;
+  flat.forEach((n) => {
+    if (n.type === 'warn') return;
+    if (index >= n.start && index < n.end && (!best || n.end - n.start < best.end - best.start)) best = n;
+  });
+  return best;
+}
+
+function renderRegexExplanation(container, pattern, result) {
+  const rows = [];
+  const tokenText = (n) => {
+    const t = pattern.slice(n.start, n.end);
+    return t.length > 48 ? `${t.slice(0, 47)}…` : t;
+  };
+  const addRows = (nodes, depth) => {
+    nodes.forEach((n) => {
+      const cls = ['rx-row'];
+      if (n.error) cls.push('rx-error');
+      if (n.warn) cls.push('rx-warn');
+      const chip = n.group ? ` rx-gchip rgx-group-p${(n.group - 1) % 10}` : '';
+      rows.push(`<div class="${cls.join(' ')}" data-s="${n.start}" data-e="${n.end}"${n.group ? ` data-group="${n.group}"` : ''} style="padding-left:${0.35 + depth * 1.1}rem">`
+        + `${n.type === 'warn' ? '<span class="rx-token rx-token-note">note</span>' : `<code class="rx-token${chip}">${escapeHtml(tokenText(n)) || '&nbsp;'}</code>`}`
+        + `<span class="rx-desc">${escapeHtml(n.desc)}</span></div>`);
+      addRows(n.children || [], depth + 1);
+      if (n.quant) {
+        const q = n.quant;
+        rows.push(`<div class="rx-row" data-s="${q.start}" data-e="${q.end}" style="padding-left:${0.35 + (depth + 1) * 1.1}rem">`
+          + `<code class="rx-token">${escapeHtml(tokenText(q))}</code><span class="rx-desc">${escapeHtml(q.desc)}</span></div>`);
+      }
+    });
+  };
+  if (!pattern) {
+    container.innerHTML = '<div class="rx-empty">Type a pattern to see it explained token by token.</div>';
+    return;
+  }
+  addRows(result.tree, 0);
+  const flagNote = result.flags ? ` · flags: ${result.flags.split('').map((f) => RX_FLAG_NAMES[f] || f).join(', ')}` : '';
+  const groupNote = `${result.groupCount} capturing group${result.groupCount === 1 ? '' : 's'}`;
+  const errorNote = result.errors.length
+    ? `<div class="rx-problems">${result.errors.map((e) => `<div>✗ ${escapeHtml(e.message)} (at position ${e.start})</div>`).join('')}</div>`
+    : '';
+  container.innerHTML = `<div class="rx-summary">Python re · ${groupNote}${escapeHtml(flagNote)}</div>${errorNote}${rows.join('')}`;
+}
+
 // Per-tool callbacks that receive each API result (from Run or auto preview).
 const toolResultHooks = {};
 
@@ -2645,6 +3059,104 @@ function init() {
       optionsRow.append(flagGroup, replaceGroup);
       const patternField = panel.querySelector('.field[data-key="pattern"]');
       if (patternField) patternField.after(optionsRow);
+
+      // Explanation of the pattern, token by token, plus hover highlighting on the pattern.
+      const explainBox = document.createElement('details');
+      explainBox.className = 'regex-explain';
+      let explainOpen = true;
+      try {
+        explainOpen = localStorage.getItem('nat_regex_explain') !== 'closed';
+      } catch (err) {
+        explainOpen = true;
+      }
+      explainBox.open = explainOpen;
+      const explainSummary = document.createElement('summary');
+      explainSummary.textContent = 'Explanation';
+      const explainRows = document.createElement('div');
+      explainRows.className = 'rx-rows';
+      explainBox.append(explainSummary, explainRows);
+      explainBox.addEventListener('toggle', () => {
+        try {
+          localStorage.setItem('nat_regex_explain', explainBox.open ? 'open' : 'closed');
+        } catch (err) {
+          // Storage unavailable: the box just opens by default next time.
+        }
+      });
+      optionsRow.after(explainBox);
+
+      const patternEditor = patternInput.parentElement;
+      const hoverLayer = document.createElement('pre');
+      hoverLayer.className = 'regex-hover-layer';
+      hoverLayer.setAttribute('aria-hidden', 'true');
+      patternEditor.insertBefore(hoverLayer, patternEditor.firstChild);
+      patternInput.addEventListener('scroll', () => {
+        hoverLayer.scrollTop = patternInput.scrollTop;
+        hoverLayer.scrollLeft = patternInput.scrollLeft;
+      });
+
+      let explained = { tree: [], errors: [], groupCount: 0, flags: '' };
+      let flat = [];
+      const refreshExplanation = () => {
+        explained = explainRegex(patternInput.value, flagsInput.value);
+        flat = flattenRegexTree(explained.tree);
+        renderRegexExplanation(explainRows, patternInput.value, explained);
+        clearFocus();
+      };
+
+      const textLayer = () => panel.querySelector('.regex-text-highlight');
+      const clearFocus = () => {
+        hoverLayer.innerHTML = '';
+        explainRows.querySelectorAll('.rx-active').forEach((r) => r.classList.remove('rx-active'));
+        const layer = textLayer();
+        if (layer) layer.querySelectorAll('.rgx-group-focus').forEach((g) => g.classList.remove('rgx-group-focus'));
+      };
+      const focusRange = (start, end, group, fromRows) => {
+        clearFocus();
+        const value = patternInput.value;
+        hoverLayer.innerHTML = `${escapeHtml(value.slice(0, start))}<span class="rx-hover">${escapeHtml(value.slice(start, end))}</span>${escapeHtml(value.slice(end))}\n`;
+        hoverLayer.scrollTop = patternInput.scrollTop;
+        hoverLayer.scrollLeft = patternInput.scrollLeft;
+        const row = explainRows.querySelector(`.rx-row[data-s="${start}"][data-e="${end}"]`);
+        if (row) {
+          row.classList.add('rx-active');
+          if (!fromRows) {
+            const top = row.offsetTop - explainRows.offsetTop;
+            if (top < explainRows.scrollTop || top > explainRows.scrollTop + explainRows.clientHeight - row.offsetHeight) {
+              explainRows.scrollTop = Math.max(0, top - explainRows.clientHeight / 2);
+            }
+          }
+        }
+        const layer = textLayer();
+        if (group && layer) layer.querySelectorAll(`[data-gid="${group}"]`).forEach((g) => g.classList.add('rgx-group-focus'));
+      };
+
+      attachTextareaHover(patternInput, (index) => {
+        const node = regexNodeAt(flat, index);
+        if (!node) {
+          clearFocus();
+          return null;
+        }
+        focusRange(node.start, node.end, node.group || node.refGroup, false);
+        const token = patternInput.value.slice(node.start, node.end);
+        const groupLine = node.group
+          ? '<div class="tip-note">Its captures are outlined in the Text box.</div>'
+          : node.refGroup ? `<div class="tip-note">Group ${node.refGroup}\u2019s captures are outlined in the Text box.</div>` : '';
+        return `
+          <div class="regex-tip-title"><code>${escapeTip(token.length > 60 ? `${token.slice(0, 59)}\u2026` : token)}</code></div>
+          <div class="${node.error ? 'tip-error' : ''}">${escapeTip(node.desc)}</div>${groupLine}`;
+      });
+      patternInput.addEventListener('mouseleave', clearFocus);
+
+      explainRows.addEventListener('mouseover', (event) => {
+        const row = event.target.closest && event.target.closest('.rx-row');
+        if (!row) return;
+        focusRange(Number(row.dataset.s), Number(row.dataset.e), Number(row.dataset.group) || null, true);
+      });
+      explainRows.addEventListener('mouseleave', clearFocus);
+
+      patternInput.addEventListener('input', refreshExplanation);
+      flagsInput.addEventListener('input', refreshExplanation);
+      refreshExplanation();
 
       panel.querySelector('.grid').after(createRegexCheatsheet());
     }

@@ -11,7 +11,7 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 ## Feature Set
 
 - `J2 Renderer` (Jinja2 template rendering, with an optional NetBox mode)
-- `Regex Tester` (Python `re`, with flags, named groups, replace preview, and a portability check for `grep -E`/`grep -P` and Cisco IOS/IOS-XE)
+- `Regex Tester` (Python `re`, with a token-by-token explanation, hover highlighting on the pattern, flags, named groups, replace preview, and a portability check for `grep -E`/`grep -P` and Cisco IOS/IOS-XE)
 - `TextFSM Parser` for structured extraction from CLI output
 - `Data Format Converter` (`JSON <-> XML <-> YAML`)
 - `JMESPath Validator` for JSON filtering and selection
@@ -138,7 +138,8 @@ GitHub Actions for every push and pull request (`.github/workflows/tests.yml`).
 │   ├── app.js              # Tool definitions, editors, live preview, cheatsheets
 │   └── style.css           # Layout and themes
 ├── tests/
-│   └── test_app.py         # Endpoint tests (pytest)
+│   ├── test_app.py         # Endpoint tests (pytest)
+│   └── test_regex_explain.py  # Regex explanation (JS) checked against Python's compiler (needs node)
 ├── images/                 # Screenshots used in this README
 ├── docs/images/            # Earlier screenshots kept for reference
 ├── requirements.txt
