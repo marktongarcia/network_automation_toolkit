@@ -22,7 +22,7 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 - `Data Model Workbench` to infer JSON Schema/Pydantic models and validate payloads
 - `Base64 Utility`
 - Theme selector with `Sand`, `Solarized`, `Light`, and `Dark` palettes (saved in browser)
-- `Ctrl+Enter` runs the current tool, a `Copy` button on every output, and the last-used tab is remembered
+- `Ctrl+Enter` runs the current tool, a `Copy` button on every output, searchable cheatsheets, and the last-used tab is remembered
 - Hover tooltips: J2 output shows the template line that produced it; TextFSM input shows the matching rule and captured Values; JSON Schema underlines every error in the data; JMESPath and XPath data show the path to the hovered value
 
 ## Python Playground Highlights
@@ -139,7 +139,8 @@ GitHub Actions for every push and pull request (`.github/workflows/tests.yml`).
 │   └── style.css           # Layout and themes
 ├── tests/
 │   ├── test_app.py         # Endpoint tests (pytest)
-│   └── test_regex_explain.py  # Regex explanation (JS) checked against Python's compiler (needs node)
+│   ├── test_regex_explain.py     # Regex explanation (JS) checked against Python's compiler (needs node)
+│   └── test_regex_cheatsheet.py  # Every regex quick-reference example runs in Python (needs node)
 ├── images/                 # Screenshots used in this README
 ├── docs/images/            # Earlier screenshots kept for reference
 ├── requirements.txt

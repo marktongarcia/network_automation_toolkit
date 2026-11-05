@@ -372,65 +372,154 @@ function highlightRegexPattern(pattern) {
   return html;
 }
 
-function createRegexCheatsheet() {
+// Regex quick reference (Python re). Each row's example is checked by tests/test_regex_cheatsheet.py:
+// test.text must contain a match equal to test.expect, or for substitution rows
+// re.sub(test.pattern, example, test.text) must equal test.expect.
+const REGEX_REFERENCE = [
+  { section: 'Character classes' },
+  { tokens: ['.'], meaning: 'Any character except a newline (any character at all with the s flag)', example: 'desc.+', test: { text: 'description WAN', expect: 'description WAN' } },
+  { tokens: ['\\d', '\\D'], meaning: 'A digit / anything that is not a digit', example: 'VLAN\\d+', test: { text: 'name VLAN110', expect: 'VLAN110' } },
+  { tokens: ['\\w', '\\W'], meaning: 'A word character (letter, digit, _) / anything else', example: '\\w+_ID', test: { text: 'set SITE_ID 4', expect: 'SITE_ID' } },
+  { tokens: ['\\s', '\\S'], meaning: 'Whitespace (space, tab, newline) / anything else', example: 'ip\\s+address', test: { text: ' ip  address 10.0.0.1', expect: 'ip  address' } },
+  { tokens: ['[abc]'], meaning: 'One of the listed characters', example: '[GT]i\\S+', test: { text: 'Te1/1 Gi0/1', expect: 'Gi0/1' } },
+  { tokens: ['[a-z]'], meaning: 'A character in a range', example: '[0-9a-f]{4}', test: { text: 'mac 00a1.b2c3', expect: '00a1' } },
+  { tokens: ['[^abc]'], meaning: 'Any character NOT listed', example: '[^\\s,]+', test: { text: 'Gi0/1, Gi0/2', expect: 'Gi0/1' } },
+  { tokens: ['[\\d.]'], meaning: 'Classes and characters combine; inside [ ] a . is a literal dot', example: '[\\d.]+', test: { text: 'ip 10.1.2.3 up', expect: '10.1.2.3' } },
+
+  { section: 'Anchors and boundaries' },
+  { tokens: ['^'], meaning: 'Start of the string; start of every line with the m flag', example: '(?m)^interface', test: { text: 'hostname r1\ninterface Gi0', expect: 'interface' } },
+  { tokens: ['$'], meaning: 'End of the string; end of every line with the m flag', example: '(?m)up$', test: { text: 'Gi0 up\nGi1 down', expect: 'up' } },
+  { tokens: ['\\A', '\\Z'], meaning: 'Start / end of the whole string, even with the m flag', example: '\\Ahostname', test: { text: 'hostname r1', expect: 'hostname' } },
+  { tokens: ['\\b', '\\B'], meaning: 'A word boundary / not a word boundary', example: '\\bip\\b', test: { text: 'description ship ip', expect: 'ip' } },
+
+  { section: 'Quantifiers' },
+  { tokens: ['*'], meaning: '0 or more times', example: 'Gi\\d*', test: { text: 'Gi', expect: 'Gi' } },
+  { tokens: ['+'], meaning: '1 or more times', example: '\\d+', test: { text: 'vlan 110', expect: '110' } },
+  { tokens: ['?'], meaning: '0 or 1 time (optional)', example: 'https?://', test: { text: 'http://x', expect: 'http://' } },
+  { tokens: ['{n}'], meaning: 'Exactly n times', example: '[0-9a-f]{4}', test: { text: 'aabb.ccdd', expect: 'aabb' } },
+  { tokens: ['{n,}'], meaning: 'n or more times', example: '\\d{3,}', test: { text: 'as 65001', expect: '65001' } },
+  { tokens: ['{n,m}'], meaning: 'Between n and m times', example: '\\d{1,3}', test: { text: '255', expect: '255' } },
+  { tokens: ['*?', '+?', '??'], meaning: 'Lazy: as few times as possible', example: 'description (.+?)!', test: { text: 'description a!b!', expect: 'description a!' } },
+  { tokens: ['*+', '++', '(?>...)'], meaning: 'Possessive / atomic: never gives back (Python 3.11+)', example: '\\d++', test: { text: 'vlan 110', expect: '110' } },
+
+  { section: 'Groups and references' },
+  { tokens: ['(...)'], meaning: 'Capturing group (numbered 1, 2, ... by its opening parenthesis)', example: '(Gi\\d+/\\d+)', test: { text: 'interface Gi0/1', expect: 'Gi0/1' } },
+  { tokens: ['(?:...)'], meaning: 'Non-capturing group', example: '(?:up|down)', test: { text: 'is down', expect: 'down' } },
+  { tokens: ['(?P<name>...)'], meaning: 'Named capturing group (Python syntax)', example: '(?P<intf>Gi\\S+)', test: { text: 'interface Gi0/1', expect: 'Gi0/1' } },
+  { tokens: ['\\1'], meaning: 'Backreference: the same text group 1 matched', example: '\\b(\\w+) \\1\\b', test: { text: 'the the end', expect: 'the the' } },
+  { tokens: ['(?P=name)'], meaning: 'Backreference by group name', example: '(?P<as>\\d+) (?P=as)', test: { text: '65001 65001 65002', expect: '65001 65001' } },
+  { tokens: ['a|b'], meaning: 'Alternation: either side (lowest precedence: wrap it in a group)', example: 'admin (?:up|down)', test: { text: 'admin down', expect: 'admin down' } },
+  { tokens: ['(?(1)yes|no)'], meaning: 'Conditional: "yes" if group 1 matched, otherwise "no"', example: '(<)?\\w+(?(1)>)', test: { text: '<core>', expect: '<core>' } },
+  { tokens: ['(?#...)'], meaning: 'Comment, ignored', example: '\\d+(?#vlan id)', test: { text: 'vlan 20', expect: '20' } },
+
+  { section: 'Lookarounds (match without consuming)' },
+  { tokens: ['(?=...)'], meaning: 'Positive lookahead: followed by ...', example: '\\d+(?=Mbps)', test: { text: 'speed 100Mbps', expect: '100' } },
+  { tokens: ['(?!...)'], meaning: 'Negative lookahead: NOT followed by ...', example: 'interface (?!Loopback)\\S+', test: { text: 'interface Loopback0\ninterface Gi0/1', expect: 'interface Gi0/1' } },
+  { tokens: ['(?<=...)'], meaning: 'Positive lookbehind: preceded by ... (fixed width)', example: '(?<=ip address )\\S+', test: { text: ' ip address 10.0.0.1', expect: '10.0.0.1' } },
+  { tokens: ['(?<!...)'], meaning: 'Negative lookbehind: NOT preceded by ...', example: '(?<!admin )down', test: { text: 'admin down, line down', expect: 'down' } },
+
+  { section: 'Flags (also available as checkboxes)' },
+  { tokens: ['(?i)'], meaning: 'Ignore case', example: '(?i)gigabit', test: { text: 'GigabitEthernet', expect: 'Gigabit' } },
+  { tokens: ['(?m)'], meaning: 'Multiline: ^ and $ match at every line', example: '(?m)^!$', test: { text: 'a\n!\nb', expect: '!' } },
+  { tokens: ['(?s)'], meaning: 'Dot-all: . also matches newlines', example: '(?s)interface.+?!', test: { text: 'interface Gi0\n desc x\n!', expect: 'interface Gi0\n desc x\n!' } },
+  { tokens: ['(?x)'], meaning: 'Verbose: spaces and # comments in the pattern are ignored', example: '(?x) \\d+ \\. \\d+  # major.minor', test: { text: 'version 17.9', expect: '17.9' } },
+  { tokens: ['(?i:...)'], meaning: 'Flags for one part of the pattern only', example: '(?i:gi)\\d', test: { text: 'GI0', expect: 'GI0' } },
+  { tokens: ['(?a)'], meaning: 'ASCII-only \\w \\d \\s (no Unicode letters or digits)', example: '(?a)\\w+', test: { text: 'r1-core', expect: 'r1' } },
+
+  { section: 'Escapes and special characters' },
+  { tokens: ['\\.', '\\(', '\\['], meaning: 'Escape any of . ^ $ * + ? { } [ ] \\ | ( ) to match it literally', example: '10\\.0\\.0\\.1', test: { text: 'ping 10.0.0.1', expect: '10.0.0.1' } },
+  { tokens: ['\\t', '\\n', '\\r'], meaning: 'Tab, newline, carriage return', example: 'up\\r?\\n', test: { text: 'Gi0 up\r\n', expect: 'up\r\n' } },
+  { tokens: ['\\xhh', '\\uhhhh'], meaning: 'A character by its hex code', example: '\\x2d+', test: { text: 'a---b', expect: '---' } },
+
+  { section: 'Substitution (Replace with)' },
+  { tokens: ['\\1'], meaning: 'Insert what group 1 captured', example: 'Gi\\1', test: { pattern: 'GigabitEthernet(\\S+)', text: 'GigabitEthernet0/1', expect: 'Gi0/1' } },
+  { tokens: ['\\g<name>'], meaning: 'Insert a named group', example: '\\g<ip>', test: { pattern: 'ip address (?P<ip>\\S+) \\S+', text: 'ip address 10.0.0.1 255.0.0.0', expect: '10.0.0.1' } },
+  { tokens: ['\\g<0>'], meaning: 'Insert the whole match', example: '[\\g<0>]', test: { pattern: 'Gi\\S+', text: 'port Gi0/1', expect: 'port [Gi0/1]' } },
+  { tokens: ['\\g<1>0'], meaning: 'Group 1 followed by a digit (\\10 would mean group 10)', example: '\\g<1>0', test: { pattern: '(\\d+)', text: 'vlan 11', expect: 'vlan 110' } },
+
+  { section: 'Network recipes' },
+  { tokens: ['IPv4'], meaning: 'Dotted IPv4 address (does not check 0-255)', example: '\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b', test: { text: 'peer 192.0.2.10 up', expect: '192.0.2.10' } },
+  { tokens: ['Prefix'], meaning: 'IPv4 prefix with mask length', example: '\\b(?:\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}\\b', test: { text: 'route 10.1.0.0/16 via x', expect: '10.1.0.0/16' } },
+  { tokens: ['MAC (Cisco)'], meaning: 'MAC address in Cisco dotted format', example: '\\b[0-9a-f]{4}\\.[0-9a-f]{4}\\.[0-9a-f]{4}\\b', test: { text: 'mac 0050.56ab.cdef Gi0/1', expect: '0050.56ab.cdef' } },
+  { tokens: ['MAC (colon)'], meaning: 'MAC address with colons, any case', example: '(?i)\\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\\b', test: { text: 'hw 00:50:56:AB:CD:EF', expect: '00:50:56:AB:CD:EF' } },
+  { tokens: ['Interface'], meaning: 'Interface name from a config line', example: '(?m)^interface (\\S+)', test: { text: '!\ninterface TenGigabitEthernet1/0/1', expect: 'interface TenGigabitEthernet1/0/1' } },
+  { tokens: ['Block'], meaning: 'One whole config block, from interface to !', example: '(?ms)^interface Gi0/1$.*?^!', test: { text: 'interface Gi0/1\n desc x\n!\ninterface Gi0/2\n!', expect: 'interface Gi0/1\n desc x\n!' } }
+];
+
+function createRegexCheatsheet(patternInput) {
   const wrap = document.createElement('details');
   wrap.className = 'regex-cheatsheet';
 
   const summary = document.createElement('summary');
-  summary.textContent = 'Regex quick help / cheatsheet';
+  summary.textContent = 'Regex quick reference';
   wrap.appendChild(summary);
 
   const content = document.createElement('div');
   content.className = 'regex-cheatsheet-content';
+  const rows = REGEX_REFERENCE.map((r) => {
+    if (r.section) return `<tr class="section-row"><td colspan="3">${escapeHtml(r.section)}</td></tr>`;
+    const tokens = r.tokens.map((t) => `<code class="cs-insert" data-insert="${escapeHtml(t)}" title="Insert into the pattern">${escapeHtml(t)}</code>`).join(' ');
+    return `<tr><td>${tokens}</td><td>${escapeHtml(r.meaning)}</td><td><code>${escapeHtml(r.example)}</code></td></tr>`;
+  }).join('');
   content.innerHTML = `
+    <input type="search" class="cs-filter" placeholder="Search the reference, e.g. lazy, named, mac, \\b" aria-label="Search the regex reference">
     <div class="regex-cheatsheet-table-wrap">
       <table class="regex-cheatsheet-table">
-        <thead>
-          <tr>
-            <th>Pattern</th>
-            <th>Meaning</th>
-            <th>Example</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr class="section-row"><td colspan="3">Character Classes</td></tr>
-          <tr><td><code>\\d</code></td><td>Digit</td><td><code>VLAN\\d+</code></td></tr>
-          <tr><td><code>\\w</code></td><td>Word character (a-z, A-Z, 0-9, _)</td><td><code>\\w+_ID</code></td></tr>
-          <tr><td><code>\\s</code></td><td>Whitespace</td><td><code>ip\\s+address</code></td></tr>
-          <tr><td><code>[A-Z0-9_]</code></td><td>Custom class</td><td><code>HOST_[A-Z0-9_]+</code></td></tr>
-          <tr><td><code>[^ ]</code></td><td>Negated class (not a space)</td><td><code>[^\\s]+</code></td></tr>
-
-          <tr class="section-row"><td colspan="3">Anchors and Boundaries</td></tr>
-          <tr><td><code>^</code></td><td>Start of line</td><td><code>^interface</code></td></tr>
-          <tr><td><code>$</code></td><td>End of line</td><td><code>up$</code></td></tr>
-          <tr><td><code>\\b</code></td><td>Word boundary</td><td><code>\\bip\\b</code></td></tr>
-
-          <tr class="section-row"><td colspan="3">Quantifiers</td></tr>
-          <tr><td><code>*</code></td><td>0 or more</td><td><code>\\d*</code></td></tr>
-          <tr><td><code>+</code></td><td>1 or more</td><td><code>\\d+</code></td></tr>
-          <tr><td><code>?</code></td><td>0 or 1 (or lazy modifier)</td><td><code>\\w+?</code></td></tr>
-          <tr><td><code>{m,n}</code></td><td>Between m and n</td><td><code>\\d{1,3}</code></td></tr>
-
-          <tr class="section-row"><td colspan="3">Groups and Logic</td></tr>
-          <tr><td><code>(...)</code></td><td>Capturing group</td><td><code>(GigabitEthernet\\d+/\\d+)</code></td></tr>
-          <tr><td><code>(?:...)</code></td><td>Non-capturing group</td><td><code>(?:up|down)</code></td></tr>
-          <tr><td><code>|</code></td><td>OR alternation</td><td><code>up|down</code></td></tr>
-          <tr><td><code>.</code></td><td>Any character</td><td><code>desc.+</code></td></tr>
-
-          <tr class="section-row"><td colspan="3">Lookarounds and Flags</td></tr>
-          <tr><td><code>(?=...)</code></td><td>Positive lookahead</td><td><code>\\d+(?=Mbps)</code></td></tr>
-          <tr><td><code>(?!...)</code></td><td>Negative lookahead</td><td><code>interface(?!\\s+Loopback)</code></td></tr>
-          <tr><td><code>(?&lt;=...)</code></td><td>Positive lookbehind</td><td><code>(?&lt;=ip\\saddress\\s)\\S+</code></td></tr>
-          <tr><td><code>(?&lt;!...)</code></td><td>Negative lookbehind</td><td><code>(?&lt;!admin\\s)down</code></td></tr>
-          <tr><td><code>(?i) (?m) (?s)</code></td><td>Ignore case, multiline, dotall</td><td><code>(?mi)^interface</code></td></tr>
-          <tr><td><code>\\.</code> <code>\\(</code></td><td>Escape special chars literally</td><td><code>10\\.10\\.10\\.1</code></td></tr>
-        </tbody>
+        <thead><tr><th>Token</th><th>Meaning</th><th>Example</th></tr></thead>
+        <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="regex-tip">Tip: for network parsing, anchor blocks with <code>^interface</code> and make inner matches lazy with <code>.+?</code> when boundaries repeat.</p>
+    <p class="regex-tip">Click a token to insert it at the cursor in the Pattern box. Examples use Python re syntax, the same as Ansible, TextFSM and TTP.</p>
   `;
   wrap.appendChild(content);
+  attachCheatsheetFilter(content);
+
+  if (patternInput) {
+    let caret = null;
+    const remember = () => {
+      caret = [patternInput.selectionStart, patternInput.selectionEnd];
+    };
+    ['keyup', 'click', 'select', 'blur'].forEach((evt) => patternInput.addEventListener(evt, remember));
+    content.addEventListener('click', (event) => {
+      const el = event.target.closest && event.target.closest('.cs-insert');
+      if (!el) return;
+      const token = el.dataset.insert;
+      const [start, end] = caret || [patternInput.value.length, patternInput.value.length];
+      patternInput.value = patternInput.value.slice(0, start) + token + patternInput.value.slice(end);
+      const pos = start + token.length;
+      patternInput.focus();
+      patternInput.setSelectionRange(pos, pos);
+      caret = [pos, pos];
+      patternInput.dispatchEvent(new Event('input'));
+    });
+  }
   return wrap;
+}
+
+// Live search over a cheatsheet table: hides non-matching rows and empty sections.
+function attachCheatsheetFilter(content) {
+  const input = content.querySelector('.cs-filter');
+  if (!input) return;
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    let section = null;
+    let sectionHasMatch = false;
+    const finishSection = () => {
+      if (section) section.hidden = !sectionHasMatch;
+    };
+    content.querySelectorAll('tbody tr').forEach((tr) => {
+      if (tr.classList.contains('section-row')) {
+        finishSection();
+        section = tr;
+        sectionHasMatch = false;
+        return;
+      }
+      const hit = !q || tr.textContent.toLowerCase().includes(q) || (section && section.textContent.toLowerCase().includes(q));
+      tr.hidden = !hit;
+      if (hit) sectionHasMatch = true;
+    });
+    finishSection();
+  });
 }
 
 function buildMatchInnerHtml(text, matchStart, matchEnd, groups, matchId) {
@@ -1940,6 +2029,7 @@ function createToolCheatsheet(toolId) {
   content.className = 'regex-cheatsheet-content';
   const body = rows.map((r) => `<tr><td>${escapeHtml(r[0])}</td><td><code>${escapeHtml(r[1])}</code></td><td>${escapeHtml(r[2])}</td><td><code>${escapeHtml(r[3])}</code></td></tr>`).join('');
   content.innerHTML = `
+    <input type="search" class="cs-filter" placeholder="Search the cheatsheet" aria-label="Search the cheatsheet">
     <div class="regex-cheatsheet-table-wrap">
       <table class="regex-cheatsheet-table tool-cheatsheet-table">
         <thead>
@@ -1955,6 +2045,7 @@ function createToolCheatsheet(toolId) {
     </div>
   `;
   wrap.appendChild(content);
+  attachCheatsheetFilter(content);
   return wrap;
 }
 
@@ -3158,7 +3249,7 @@ function init() {
       flagsInput.addEventListener('input', refreshExplanation);
       refreshExplanation();
 
-      panel.querySelector('.grid').after(createRegexCheatsheet());
+      panel.querySelector('.grid').after(createRegexCheatsheet(inputs.pattern));
     }
     attachHoverFeatures(tool, inputs, outputEl);
     attachAutoPreview(tool, inputs, outputEl, panel);
