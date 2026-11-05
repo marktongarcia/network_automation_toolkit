@@ -7,3 +7,4 @@ PyYAML==6.0.2
 xmltodict==0.14.2
 Jinja2==3.1.6
 ttp==0.9.5
+ntc-templates==9.3.0

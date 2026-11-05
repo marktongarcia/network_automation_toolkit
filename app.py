@@ -35,6 +35,7 @@ from ttp import ttp
 
 import hover_trace
 import regex_engine
+import textfsm_tools
 
 app = Flask(__name__)
 FUNCTION_REPL_SESSIONS = {}
@@ -236,11 +237,54 @@ def textfsm_parser():
 
     try:
         parser = hover_trace.TracingTextFSM(io.StringIO(template))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Template error: {exc}", "error_line": textfsm_tools.error_line(str(exc))}), 400
+    try:
         rows = parser.ParseText(raw_text)
-        records = [dict(zip(parser.header, row)) for row in rows]
-        return jsonify({"ok": True, "headers": parser.header, "rows": rows, "records": records, "trace": parser.trace})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "template_info": textfsm_tools.template_info(parser)}), 400
+    records = [dict(zip(parser.header, row)) for row in rows]
+    return jsonify({
+        "ok": True,
+        "headers": parser.header,
+        "rows": rows,
+        "records": records,
+        "trace": parser.trace,
+        "template_info": textfsm_tools.template_info(parser),
+        "check": textfsm_tools.template_check(parser, parser.trace, parser.dropped),
+    })
+
+
+@app.get("/api/textfsm/ntc")
+def textfsm_ntc_index():
+    """Platforms and commands available in the installed ntc-templates package."""
+    index = textfsm_tools.ntc_index()
+    if index is None:
+        return error_response("ntc-templates is not installed. Run: pip install -r requirements.txt")
+    return jsonify({"ok": True, "version": textfsm_tools.ntc_version(), "platforms": index})
+
+
+@app.post("/api/textfsm/ntc/find")
+def textfsm_ntc_find():
+    """Find the ntc template for a platform and a command as typed on the device (abbreviations allowed)."""
+    payload = request.get_json(silent=True) or {}
+    platform = str(payload.get("platform", "")).strip()
+    command = " ".join(str(payload.get("command", "")).split())
+    if not platform or not command:
+        return error_response("Platform and command are required.")
+    try:
+        names = textfsm_tools.ntc_find(platform, command)
     except Exception as exc:
         return error_response(str(exc))
+    if names is None:
+        if textfsm_tools.ntc_template_dir() is None:
+            return error_response("ntc-templates is not installed. Run: pip install -r requirements.txt")
+        return error_response(f"No ntc template for '{command}' on {platform}.")
+    text = textfsm_tools.ntc_read(names[0])
+    if text is None:
+        return error_response(f"Template file {names[0]} not found.")
+    return jsonify({"ok": True, "template": names[0], "templates": names, "text": text,
+                    "version": textfsm_tools.ntc_version()})
 
 
 @app.post("/api/xpath")

@@ -411,3 +411,72 @@ def test_jinja2_variable_usage(client):
         assert variables[k["start"]:k["end"]] == '"spare"'
     yaml_usage = post(client, "/api/jinja2", template="{{ a.b }}", variables="a:\n  b: 1\n  c: 2\n", variables_format="yaml")["usage"]
     assert [(k["path"], k["used"]) for k in yaml_usage["keys"]] == [(["a"], True), (["a", "b"], True), (["a", "c"], False)]
+
+
+# --- TextFSM: template info, check, ntc-templates ----------------------------------------
+
+TEXTFSM_TEMPLATE = """Value Filldown,Required VRF (\\S+)
+Value Required NAME (\\S+)
+Value List IPS (\\S+)
+Value UNUSED (\\d+)
+
+Start
+  ^VRF ${VRF} -> Detail
+  ^never matches$$
+
+Detail
+  ^ intf ${NAME}
+  ^ ip ${IPS}
+  ^! -> Record Start
+
+Orphan
+  ^x
+"""
+
+
+def test_textfsm_template_info_and_check(client):
+    text = "VRF blue\n intf Gi0\n ip 10.0.0.1\n ip 10.0.0.2\n!\nVRF red\n ip 10.9.9.9\n!\n"
+    data = post(client, "/api/textfsm", template=TEXTFSM_TEMPLATE, text=text)
+    assert data["records"] == [{"VRF": "blue", "NAME": "Gi0", "IPS": ["10.0.0.1", "10.0.0.2"], "UNUSED": ""}]
+    info = data["template_info"]
+    assert [v["options"] for v in info["values"]][:3] == [["Filldown", "Required"], ["Required"], ["List"]]
+    rule = next(r for r in info["rules"] if r["line"] == 7)
+    assert rule["regex"] == "^VRF (?P<VRF>\\S+)" and rule["new_state"] == "Detail"
+    check = data["check"]
+    assert check["unused_values"] == ["UNUSED"]
+    assert check["unreachable_states"] == ["Orphan"]
+    assert [r["line"] for r in check["unmatched_rules"]] == [8]  # Orphan is never entered, so not listed
+    assert len(check["dropped_records"]) == 1  # the red VRF block had no NAME (Required)
+    assert check["dropped_records"][0]["required"] == ["NAME"]
+
+
+def test_textfsm_template_error_line(client):
+    data = post(client, "/api/textfsm", template="Value A (x)\n\nStart\n  ^${B} -> Record\n", text="x")
+    assert data["ok"] is False and data["error_line"] == 4
+
+
+def test_ntc_index_and_find(client):
+    index = client.get("/api/textfsm/ntc").get_json()
+    assert index["ok"] and "cisco_ios" in index["platforms"]
+    commands = {e["command"] for e in index["platforms"]["cisco_ios"]}
+    assert "show ip interface brief" in commands
+    found = post(client, "/api/textfsm/ntc/find", platform="cisco_ios", command="sh ip int br")
+    assert found["template"] == "cisco_ios_show_ip_interface_brief.textfsm"
+    assert found["text"].startswith("Value")
+    missing = post(client, "/api/textfsm/ntc/find", platform="cisco_ios", command="show nonsense")
+    assert missing["ok"] is False
+
+
+def test_ntc_template_parses_real_output(client):
+    found = post(client, "/api/textfsm/ntc/find", platform="cisco_ios", command="show ip interface brief")
+    output = ("Interface              IP-Address      OK? Method Status                Protocol\n"
+              "GigabitEthernet0/0     10.10.10.1      YES manual up                    up\n"
+              "Loopback0              192.168.255.1   YES manual up                    up\n")
+    data = post(client, "/api/textfsm", template=found["text"], text=output)
+    assert [r["INTERFACE"] for r in data["records"]] == ["GigabitEthernet0/0", "Loopback0"]
+
+
+def test_ntc_read_rejects_paths():
+    import textfsm_tools
+    assert textfsm_tools.ntc_read("../index") is None
+    assert textfsm_tools.ntc_read("/etc/passwd") is None

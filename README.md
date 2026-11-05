@@ -12,7 +12,7 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 
 - `J2 Renderer` (Jinja2 template rendering, with an optional NetBox mode, a variables check that finds typos and unused variables, and hover help on variables, filters and block tags)
 - `Regex Tester` (Python `re`, with a token-by-token explanation, hover highlighting on the pattern, flags, named groups, replace preview, and a portability check for `grep -E`/`grep -P` and Cisco IOS/IOS-XE)
-- `TextFSM Parser` for structured extraction from CLI output
+- `TextFSM Parser` for structured extraction from CLI output: load any template from the ntc-templates library by platform and command (abbreviations like `sh ip int br` work), results as a table, a template check (unused Values, unreachable states, rules that never matched, records dropped by `Required`), and two-way hover between template, input and results
 - `Data Format Converter` (`JSON <-> XML <-> YAML`)
 - `JMESPath Validator` for JSON filtering and selection
 - `Python Playground` with session state and terminal-style prompt
@@ -132,6 +132,7 @@ GitHub Actions for every push and pull request (`.github/workflows/tests.yml`).
 ├── app.py                  # Flask app and all API endpoints
 ├── regex_engine.py         # Regex Tester: time-limited matching and portability rules
 ├── hover_trace.py          # Data for hover tooltips (J2 line mapping, TextFSM rule trace)
+├── textfsm_tools.py        # TextFSM template info/check and ntc-templates lookup
 ├── templates/
 │   └── index.html          # Page shell
 ├── static/

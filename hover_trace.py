@@ -103,7 +103,17 @@ class TracingTextFSM(textfsm.TextFSM):
     def __init__(self, template):
         super().__init__(template)
         self.trace = []
+        self.dropped = []  # records lost because a Required Value was empty
         self._line_index = -1
+
+    def _AppendRecord(self):
+        required_empty = [v.name for v in self.values if "Required" in [o.name for o in v.options] and not v.value]
+        captured = {v.name: v.value for v in self.values
+                    if v.value and "Filldown" not in [o.name for o in v.options]}
+        before = len(self._result)
+        super()._AppendRecord()
+        if len(self._result) == before and required_empty and captured and len(self.dropped) < 50:
+            self.dropped.append({"line": self._line_index, "required": required_empty, "values": captured})
 
     def _CheckLine(self, line):
         # Same logic as textfsm.TextFSM._CheckLine (textfsm 1.1.3), plus recording.

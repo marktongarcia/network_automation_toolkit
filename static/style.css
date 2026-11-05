@@ -320,6 +320,8 @@ textarea {
 
 .actions .live-preview-controls {
   flex: 1 1 260px;
+  min-width: 0; /* let a long status shrink (it ends with an ellipsis) instead of widening the page */
+  max-width: 100%;
   margin-top: 0;
 }
 
@@ -1332,6 +1334,115 @@ button.run.ghost {
 
 .j2-legend span[class] {
   padding: 0 0.3rem;
+}
+
+/* TextFSM: ntc-templates loader, results table, input highlights. */
+.ntc-controls {
+  justify-content: flex-start;
+}
+
+.ntc-label {
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.ntc-controls .ntc-platform {
+  width: auto;
+  max-width: 100%;
+  padding: 0.3rem 0.5rem;
+}
+
+.ntc-controls .ntc-command {
+  flex: 1 1 260px;
+  width: auto;
+  padding: 0.3rem 0.5rem;
+  font-family: "JetBrains Mono", Consolas, monospace;
+}
+
+.ntc-controls .ntc-load {
+  padding: 0.3rem 0.8rem;
+}
+
+.ntc-controls .ntc-status {
+  flex: 1 1 100%;
+  text-align: left;
+  white-space: normal;
+}
+
+.tfsm-view {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.8rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.tfsm-view button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tfsm-view button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.tfsm-view + .output-wrap .output,
+.tfsm-view + .output {
+  margin-top: 0.4rem;
+}
+
+.tfsm-table {
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.tfsm-table th,
+.tfsm-table td {
+  border: 1px solid color-mix(in srgb, var(--output-text) 22%, transparent);
+  padding: 0.25rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.tfsm-table th {
+  background: color-mix(in srgb, var(--output-text) 10%, transparent);
+}
+
+.tfsm-table .tfsm-num {
+  color: color-mix(in srgb, var(--output-text) 55%, transparent);
+}
+
+.tfsm-table tr.tfsm-row-active td {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.tfsm-count {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: color-mix(in srgb, var(--output-text) 60%, transparent);
+}
+
+.tfsm-unmatched {
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 18%, transparent) 0 6px, transparent 6px 12px);
+}
+
+.tfsm-focus-line {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.tfsm-focus-value {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .j2-check {

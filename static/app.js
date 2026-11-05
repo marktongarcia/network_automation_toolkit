@@ -1603,6 +1603,108 @@ function resolveJinjaPath(scan, context, path, index, depth = 0) {
   return { kind: 'unknown' };
 }
 
+// ---- TextFSM template scanner and help texts ---------------------------------------------
+
+const TEXTFSM_OPTION_HELP = {
+  Filldown: 'Keeps its last value in the following records instead of being cleared after each Record. Only Clearall clears it.',
+  Key: 'Marks the Value as part of the record’s unique key (used by tools such as clitable to merge results). No effect on parsing.',
+  Required: 'A record is only saved if this Value has a value; otherwise the whole record is discarded.',
+  List: 'Collects every match into a list instead of keeping only the last one.',
+  Fillup: 'Copies its value upward into earlier records that have it empty, until it reaches one that already has a value.'
+};
+const TEXTFSM_ACTION_HELP = {
+  Next: 'Default. Done with this input line: read the next line and start again at the first rule of the state.',
+  Continue: 'Keep checking the same input line against the following rules. Cannot be combined with a state change.',
+  Record: 'Save the current Values as a record, then clear them (except Filldown Values).',
+  NoRecord: 'Default. Do not save a record.',
+  Clear: 'Clear the current Values, except Filldown ones.',
+  Clearall: 'Clear all current Values, including Filldown ones.',
+  Error: 'Stop parsing with an error and return no records. An optional message can follow in quotes.'
+};
+const TEXTFSM_STATE_HELP = {
+  Start: 'Parsing begins in this state.',
+  End: 'Stops parsing immediately; no implicit record is added at the end of the input.',
+  EOF: 'Runs at the end of the input. By default it saves a final record; declaring an empty EOF state turns that off.'
+};
+
+// Find Values, states, rules, ${VALUE} references and actions (with positions) in a TextFSM template.
+function scanTextfsmTemplate(text) {
+  const tokens = [];
+  const values = {};
+  const states = {};
+  const rules = [];
+  const starts = lineStarts(text);
+  let inValues = true;
+  let current = null;
+  text.split('\n').forEach((ln, i) => {
+    const base = starts[i];
+    const line = i + 1;
+    if (/^\s*#/.test(ln)) return;
+    if (inValues) {
+      const m = ln.match(/^Value\s+(?:([A-Za-z]+(?:,[A-Za-z]+)*)\s+)?(\S+)\s+(\(.*\))\s*$/);
+      if (m) {
+        let pos = ln.indexOf(' ') + 1;
+        const options = [];
+        if (m[1]) {
+          pos = ln.indexOf(m[1], pos);
+          let p = pos;
+          m[1].split(',').forEach((opt) => {
+            options.push(opt);
+            tokens.push({ type: 'option', word: opt, start: base + p, end: base + p + opt.length, line });
+            p += opt.length + 1;
+          });
+          pos += m[1].length;
+        }
+        const nameAt = ln.indexOf(m[2], pos);
+        const regexAt = ln.indexOf(m[3], nameAt + m[2].length);
+        values[m[2]] = { line, options, regex: m[3], start: base + nameAt, end: base + nameAt + m[2].length };
+        tokens.push({ type: 'value', name: m[2], start: base + nameAt, end: base + nameAt + m[2].length, line });
+        tokens.push({ type: 'valueregex', name: m[2], start: base + regexAt, end: base + regexAt + m[3].length, line });
+        return;
+      }
+      if (!ln.trim()) return;
+      inValues = false;
+    }
+    const header = ln.match(/^(\w+)\s*$/);
+    if (header) {
+      current = header[1];
+      states[current] = { line, start: base, end: base + current.length };
+      tokens.push({ type: 'state', name: current, start: base, end: base + current.length, line });
+      return;
+    }
+    const caret = ln.search(/^\s+\^/) === 0 ? ln.indexOf('^') : -1;
+    if (caret === -1) return;
+    const arrow = ln.lastIndexOf(' ->');
+    const regexEnd = arrow > caret ? arrow : ln.replace(/\s+$/, '').length;
+    rules.push({ line, state: current, start: base + caret, end: base + regexEnd });
+    tokens.push({ type: 'rule', line, state: current, start: base + caret, end: base + regexEnd });
+    const refRe = /\$\$|\$\{(\w+)\}|\$(\w+)/g;
+    const regexText = ln.slice(caret, regexEnd);
+    let r;
+    while ((r = refRe.exec(regexText)) !== null) {
+      const name = r[1] || r[2];
+      if (name) tokens.push({ type: 'ref', name, start: base + caret + r.index, end: base + caret + r.index + r[0].length, line });
+    }
+    if (arrow > caret) {
+      const actionText = ln.slice(arrow + 3);
+      const wordRe = /[A-Za-z_]\w*/g;
+      let w;
+      while ((w = wordRe.exec(actionText)) !== null) {
+        const word = w[0];
+        const start = base + arrow + 3 + w.index;
+        const isOp = word in TEXTFSM_ACTION_HELP;
+        if (isOp) {
+          tokens.push({ type: 'action', word, start, end: start + word.length, line });
+          if (word === 'Error') break; // the rest is the error message
+        } else {
+          tokens.push({ type: 'statelink', name: word, start, end: start + word.length, line });
+        }
+      }
+    }
+  });
+  return { tokens, values, states, rules };
+}
+
 // Wire the hover tooltips for one tool.
 function attachHoverFeatures(tool, inputs, outputEl) {
   if (tool.id === 'jinja2') {
@@ -1859,48 +1961,319 @@ function attachHoverFeatures(tool, inputs, outputEl) {
   }
 
   if (tool.id === 'textfsm' && inputs.text) {
-    // Input text -> captured Values and the rule that matched each line.
-    const overlay = attachOverlay(inputs.text);
-    let byLine = new Map();
+    const panel = outputEl.closest('.panel');
+    const template = inputs.template;
+    const textBox = inputs.text;
+
+    // --- ntc-templates loader --------------------------------------------------------
+    const ntcRow = document.createElement('div');
+    ntcRow.className = 'live-preview-controls netbox-controls ntc-controls';
+    ntcRow.innerHTML = `
+      <span class="ntc-label">ntc-templates</span>
+      <select class="ntc-platform" aria-label="Platform"><option value="">Platform…</option></select>
+      <input class="ntc-command" type="text" list="ntc-commands" placeholder="Command as you type it, e.g. sh ip int br" aria-label="Command" spellcheck="false">
+      <datalist id="ntc-commands"></datalist>
+      <button type="button" class="run secondary ntc-load">Load template</button>
+      <span class="live-preview-status ntc-status">Loading the template list…</span>`;
+    panel.querySelector('.grid').before(ntcRow);
+    const platformSel = ntcRow.querySelector('.ntc-platform');
+    const commandIn = ntcRow.querySelector('.ntc-command');
+    const commandList = ntcRow.querySelector('#ntc-commands');
+    const ntcStatus = ntcRow.querySelector('.ntc-status');
+    const defaultTemplate = template.value;
+    let lastLoaded = null;
+    let ntcIndex = {};
+    const fillCommands = () => {
+      commandList.innerHTML = (ntcIndex[platformSel.value] || []).map((e) => `<option value="${escapeHtml(e.command)}"></option>`).join('');
+    };
+    fetch('/api/textfsm/ntc').then((r) => r.json()).then((data) => {
+      if (!data.ok) {
+        ntcStatus.textContent = data.error;
+        ntcStatus.classList.add('error');
+        ntcRow.querySelectorAll('select, input, button').forEach((el) => { el.disabled = true; });
+        return;
+      }
+      ntcIndex = data.platforms;
+      const count = Object.values(ntcIndex).reduce((n, list) => n + list.length, 0);
+      platformSel.insertAdjacentHTML('beforeend', Object.keys(ntcIndex).map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join(''));
+      let saved = null;
+      try {
+        saved = localStorage.getItem('nat_ntc_platform');
+      } catch (err) {
+        saved = null;
+      }
+      platformSel.value = saved && ntcIndex[saved] ? saved : (ntcIndex.cisco_ios ? 'cisco_ios' : '');
+      fillCommands();
+      ntcStatus.textContent = `${count} templates for ${Object.keys(ntcIndex).length} platforms (ntc-templates ${data.version || ''}).`;
+    }).catch(() => {
+      ntcStatus.textContent = 'Could not load the ntc-templates list.';
+      ntcStatus.classList.add('error');
+    });
+    platformSel.addEventListener('change', () => {
+      fillCommands();
+      try {
+        localStorage.setItem('nat_ntc_platform', platformSel.value);
+      } catch (err) {
+        // Storage unavailable: the platform is just not remembered.
+      }
+    });
+    const loadTemplate = async () => {
+      ntcStatus.classList.remove('error');
+      if (!platformSel.value || !commandIn.value.trim()) {
+        ntcStatus.textContent = 'Pick a platform and type a command.';
+        ntcStatus.classList.add('error');
+        return;
+      }
+      ntcStatus.textContent = 'Looking up…';
+      try {
+        const res = await fetch('/api/textfsm/ntc/find', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ platform: platformSel.value, command: commandIn.value })
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          ntcStatus.textContent = data.error;
+          ntcStatus.classList.add('error');
+          return;
+        }
+        const edited = template.value.trim() && template.value !== defaultTemplate && template.value !== lastLoaded;
+        if (edited && !window.confirm(`Replace the template with ${data.template}? Your edits will be lost.`)) {
+          ntcStatus.textContent = 'Kept your template.';
+          return;
+        }
+        template.value = data.text;
+        lastLoaded = data.text;
+        template.dispatchEvent(new Event('input'));
+        ntcStatus.textContent = `Loaded ${data.template}${data.templates.length > 1 ? ` (this command uses ${data.templates.length} templates; showing the first)` : ''}. Paste the device output into Text.`;
+      } catch (err) {
+        ntcStatus.textContent = `Lookup failed: ${err}`;
+        ntcStatus.classList.add('error');
+      }
+    };
+    ntcRow.querySelector('.ntc-load').addEventListener('click', loadTemplate);
+    commandIn.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        loadTemplate();
+      }
+    });
+
+    // --- Results view: table or JSON -----------------------------------------------------
+    let view = 'table';
+    try {
+      view = localStorage.getItem('nat_textfsm_view') === 'json' ? 'json' : 'table';
+    } catch (err) {
+      view = 'table';
+    }
+    const viewRow = document.createElement('div');
+    viewRow.className = 'tfsm-view';
+    viewRow.innerHTML = '<span>Results:</span><button type="button" data-view="table">Table</button><button type="button" data-view="json">JSON</button>';
+    outputEl.before(viewRow);
+    const syncViewButtons = () => viewRow.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+    syncViewButtons();
+
+    // --- State shared by the hovers --------------------------------------------------------
+    let last = null; // last API result
+    let byLine = new Map(); // input line -> trace entries
     let starts = [];
-    let valueNames = [];
-    toolResultHooks.textfsm = (data) => {
-      byLine = new Map();
-      if (!data || !data.ok || !Array.isArray(data.trace)) {
+    const overlay = attachOverlay(textBox);
+    const tmplStage = template.parentElement;
+    const tmplLayer = document.createElement('pre');
+    tmplLayer.className = 'regex-hover-layer';
+    tmplLayer.setAttribute('aria-hidden', 'true');
+    tmplStage.insertBefore(tmplLayer, tmplStage.firstChild);
+    template.addEventListener('scroll', () => {
+      tmplLayer.scrollTop = template.scrollTop;
+      tmplLayer.scrollLeft = template.scrollLeft;
+    });
+    let scanCache = { text: null, scan: null };
+    const scanFor = () => {
+      if (scanCache.text !== template.value) scanCache = { text: template.value, scan: scanTextfsmTemplate(template.value) };
+      return scanCache.scan;
+    };
+    const valueNames = () => (last && last.headers) || [];
+    const ruleRegex = (line) => {
+      const r = last && last.template_info && last.template_info.rules.find((x) => x.line === line);
+      return r ? r.regex : null;
+    };
+
+    // Draw the Text box layer: captured Values coloured, unmatched lines greyed, and an optional focus.
+    const renderInput = (focus = {}) => {
+      const text = textBox.value;
+      if (!last || !last.ok) {
         overlay.plain();
         return;
       }
-      const text = inputs.text.value;
-      starts = lineStarts(text);
       const lines = text.split('\n');
-      valueNames = data.headers || [];
-      const ranges = [];
-      data.trace.forEach((t) => {
+      const names = valueNames();
+      const html = lines.map((lineText, idx) => {
+        const entries = byLine.get(idx) || [];
+        const toUnit = codePointToUnitMapper(lineText);
+        const ranges = [];
+        entries.forEach((t) => Object.entries(t.values || {}).forEach(([name, [s0, e0]]) => {
+          const k = Math.max(0, names.indexOf(name));
+          // With a line focus (a hovered table row), only outline the Value on those lines.
+          const inFocus = !focus.lines || focus.lines.has(idx);
+          const focused = focus.value === name && inFocus ? ' tfsm-focus-value' : '';
+          ranges.push({ start: toUnit(s0), end: toUnit(e0), cls: `rgx-hit rgx-hit-p${k % 10}${focused}` });
+        }));
+        const inner = rangesToHtml(lineText, ranges);
+        if (focus.lines && focus.lines.has(idx)) return `<span class="tfsm-focus-line">${inner || ' '}</span>`;
+        if (!entries.length && lineText.trim()) return `<span class="tfsm-unmatched">${inner}</span>`;
+        return inner;
+      }).join('\n');
+      overlay.render(html);
+    };
+    const showTemplateRanges = (ranges) => {
+      tmplLayer.innerHTML = rangesToHtml(template.value, ranges.map((r) => ({ ...r, cls: 'rx-hover' }))) + '\n';
+      tmplLayer.scrollTop = template.scrollTop;
+      tmplLayer.scrollLeft = template.scrollLeft;
+    };
+    const clearFocus = () => {
+      tmplLayer.innerHTML = '';
+      renderInput();
+      outputEl.querySelectorAll('.tfsm-row-active').forEach((r) => r.classList.remove('tfsm-row-active'));
+    };
+    const jumpToLine = (line) => {
+      const lines = template.value.split('\n');
+      const start = lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0);
+      template.focus();
+      template.setSelectionRange(start, start + (lines[line - 1] || '').length);
+      const lh = Number.parseFloat(getComputedStyle(template).lineHeight) || 20;
+      template.scrollTop = Math.max(0, (line - 3) * lh);
+    };
+
+    // --- Results table -----------------------------------------------------------------
+    const renderTable = (data) => {
+      const headers = data.headers || [];
+      const rows = data.rows || [];
+      const cell = (v) => (Array.isArray(v) ? v.map((x) => escapeHtml(x)).join('<br>') : escapeHtml(v));
+      outputEl.innerHTML = rows.length
+        ? `<table class="tfsm-table"><thead><tr><th>#</th>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>`
+          + `<tbody>${rows.map((r, i) => `<tr data-rec="${i}"><td class="tfsm-num">${i + 1}</td>${r.map((v, k) => `<td data-val="${escapeHtml(headers[k])}">${cell(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+          + `<div class="tfsm-count">${rows.length} record${rows.length === 1 ? '' : 's'} · hover a row to see the input lines it came from</div>`
+        : '<div class="tfsm-count">No records.</div>';
+      outputEl.dataset.copy = [headers.join('\t'), ...rows.map((r) => r.map((v) => (Array.isArray(v) ? v.join(', ') : v)).join('\t'))].join('\n');
+    };
+    const renderResults = () => {
+      if (!last) return;
+      if (!last.ok || view === 'json') {
+        showOutput(outputEl, formatAutoPreviewOutput('textfsm', last), !last.ok);
+      } else {
+        showOutput(outputEl, '');
+        renderTable(last);
+      }
+    };
+    viewRow.addEventListener('click', (event) => {
+      const btn = event.target.closest && event.target.closest('button[data-view]');
+      if (!btn) return;
+      view = btn.dataset.view;
+      try {
+        localStorage.setItem('nat_textfsm_view', view);
+      } catch (err) {
+        // Storage unavailable: the view is just not remembered.
+      }
+      syncViewButtons();
+      renderResults();
+    });
+    outputEl.addEventListener('mousemove', (event) => {
+      const row = event.target.closest && event.target.closest('tr[data-rec]');
+      if (!row || !last) {
+        sharedTip.hide();
+        return;
+      }
+      const rec = Number(row.dataset.rec);
+      const lines = new Set((last.trace || []).filter((t) => t.record === rec && Object.keys(t.values || {}).length).map((t) => t.line));
+      const td = event.target.closest('td[data-val]');
+      outputEl.querySelectorAll('.tfsm-row-active').forEach((r) => r.classList.remove('tfsm-row-active'));
+      row.classList.add('tfsm-row-active');
+      renderInput({ lines, value: td ? td.dataset.val : null });
+      const list = Array.from(lines).sort((x, y) => x - y).map((l) => l + 1);
+      sharedTip.show(event.clientX, event.clientY, `<div class="regex-tip-title">Record ${rec + 1}</div>`
+        + `<div>${list.length ? `Built from input line${list.length > 1 ? 's' : ''} ${escapeTip(list.join(', '))} (highlighted in Text).` : 'Its values came from Filldown/Fillup, not from new lines.'}</div>`);
+    });
+    outputEl.addEventListener('mouseleave', () => {
+      sharedTip.hide();
+      clearFocus();
+    });
+
+    // --- Check panel -------------------------------------------------------------------
+    const checkBox = document.createElement('div');
+    checkBox.className = 'regex-portability j2-check';
+    checkBox.hidden = true;
+    panel.querySelector('.grid').after(checkBox);
+    const renderCheck = () => {
+      const items = [];
+      if (last && !last.ok) {
+        items.push({ level: 'error', line: last.error_line, text: last.error });
+      } else if (last && last.check) {
+        const c = last.check;
+        if (c.unused_values.length) items.push({ level: 'warn', line: (scanFor().values[c.unused_values[0]] || {}).line, text: `Values declared but used in no rule: ${c.unused_values.join(', ')}` });
+        if (c.unreachable_states.length) items.push({ level: 'warn', line: (scanFor().states[c.unreachable_states[0]] || {}).line, text: `States no rule ever jumps to: ${c.unreachable_states.join(', ')}` });
+        if (c.unmatched_rules.length) {
+          const lines = c.unmatched_rules.map((r) => r.line);
+          items.push({
+            level: 'ok',
+            line: lines[0],
+            text: `${lines.length} rule${lines.length === 1 ? '' : 's'} matched no input line (template line${lines.length === 1 ? '' : 's'} ${lines.slice(0, 12).join(', ')}${lines.length > 12 ? ', \u2026' : ''}). Fine if they handle other output variants; otherwise check the regex.`
+          });
+        }
+        if (c.dropped_records.length) {
+          const req = Array.from(new Set(c.dropped_records.flatMap((d) => d.required))).join(', ');
+          const at = c.dropped_records.slice(0, 5).map((d) => d.line + 1).join(', ');
+          items.push({ level: 'warn', text: `${c.dropped_records.length} record${c.dropped_records.length === 1 ? '' : 's'} dropped because Required ${req} was empty (at input line ${at}).` });
+        }
+        const unmatched = textBox.value.split('\n').filter((l, i) => l.trim() && !byLine.has(i)).length;
+        if (unmatched) items.push({ level: 'ok', text: `${unmatched} input line${unmatched === 1 ? '' : 's'} matched no rule (greyed in the Text box). Usually headers or lines you don't need.` });
+        if (!items.some((i) => i.level !== 'ok')) {
+          items.unshift({ level: 'ok', text: c.unmatched_rules.length
+            ? 'Template looks consistent: every Value is used and every state is reachable.'
+            : 'Template looks consistent: every Value is used, every state is reachable, every rule matched.' });
+        }
+      }
+      if (!items.length) {
+        checkBox.hidden = true;
+        return;
+      }
+      const icons = { ok: '✓', warn: '!', error: '✗' };
+      checkBox.hidden = false;
+      checkBox.innerHTML = `<div class="rp-title">Template check</div><ul class="rp-list">${items.map((it) => `
+        <li class="rp-item rp-${it.level}${it.line ? ' j2-jump' : ''}"${it.line ? ` data-line="${it.line}" title="Show line ${it.line} in the template"` : ''}>
+          <span class="rp-icon" aria-hidden="true">${icons[it.level]}</span><div class="rp-body">${escapeHtml(it.text)}</div></li>`).join('')}</ul>`;
+    };
+    checkBox.addEventListener('click', (event) => {
+      const item = event.target.closest && event.target.closest('.j2-jump');
+      if (item) jumpToLine(Number(item.dataset.line));
+    });
+
+    toolResultHooks.textfsm = (data) => {
+      last = data;
+      byLine = new Map();
+      starts = lineStarts(textBox.value);
+      ((data && data.trace) || []).forEach((t) => {
         if (!byLine.has(t.line)) byLine.set(t.line, []);
         byLine.get(t.line).push(t);
-        const lineText = lines[t.line];
-        if (lineText === undefined) return;
-        const toUnit = codePointToUnitMapper(lineText);
-        Object.entries(t.values || {}).forEach(([name, [s, e]]) => {
-          const k = Math.max(0, valueNames.indexOf(name));
-          ranges.push({ start: starts[t.line] + toUnit(s), end: starts[t.line] + toUnit(e), cls: `rgx-hit rgx-hit-p${k % 10}` });
-        });
       });
-      overlay.render(rangesToHtml(text, ranges));
+      renderInput();
+      renderResults();
+      renderCheck();
     };
-    attachTextareaHover(inputs.text, (index) => {
-      if (!starts.length) return null;
+
+    // --- Hover: Text box (input -> rule and Values) ---------------------------------------
+    attachTextareaHover(textBox, (index) => {
+      if (!starts.length || !last || !last.ok) return null;
       const line = lineOfIndex(starts, index);
       const entries = byLine.get(line);
-      const lineText = inputs.text.value.split('\n')[line] || '';
+      const lineText = textBox.value.split('\n')[line] || '';
       if (!entries) {
         return lineText.trim() ? `<div class="regex-tip-title">Line ${line + 1}</div><div class="tip-note">No rule matched this line.</div>` : null;
       }
       const toUnit = codePointToUnitMapper(lineText);
       const col = index - starts[line];
       const blocks = entries.map((t) => {
-        const values = Object.entries(t.values || {}).map(([name, [s, e, v]]) => {
-          const hovered = col >= toUnit(s) && col < toUnit(e) ? ' <strong>(hovered)</strong>' : '';
+        const values = Object.entries(t.values || {}).map(([name, [s0, e0, v]]) => {
+          const hovered = col >= toUnit(s0) && col < toUnit(e0) ? ' <strong>(hovered)</strong>' : '';
           return `<li><code>${escapeTip(name)}</code>${hovered} = <code>${escapeTip(v)}</code></li>`;
         }).join('');
         return `
@@ -1909,6 +2282,66 @@ function attachHoverFeatures(tool, inputs, outputEl) {
           ${values ? `<div class="regex-tip-groups-label">Captured into record ${t.record + 1}</div><ul class="regex-tip-groups">${values}</ul>` : '<div class="tip-note">No Values captured on this line.</div>'}`;
       }).join('<hr class="tip-sep">');
       return `<div class="regex-tip-title">Line ${line + 1}</div>${blocks}`;
+    });
+
+    // --- Hover: template (Values, rules, actions, states) -> two-way highlights ----------
+    attachTextareaHover(template, (index) => {
+      const scan = scanFor();
+      const token = scan.tokens.filter((t) => index >= t.start && index < t.end)
+        .sort((x, y) => (x.end - x.start) - (y.end - y.start))[0];
+      if (!token) {
+        clearFocus();
+        return null;
+      }
+      const trace = (last && last.ok && last.trace) || [];
+      if (token.type === 'value' || token.type === 'ref' || token.type === 'valueregex') {
+        const v = scan.values[token.name];
+        const refs = scan.tokens.filter((t) => t.type === 'ref' && t.name === token.name);
+        showTemplateRanges([...(v ? [{ start: v.start, end: v.end }] : []), ...refs]);
+        renderInput({ value: token.name });
+        const captures = trace.filter((t) => t.values && t.values[token.name]).length;
+        if (!v) return `<div class="regex-tip-title"><code>${escapeTip(token.name)}</code></div><div class="tip-error">No Value with this name is declared.</div>`;
+        const opts = v.options.map((o) => `<li><code>${escapeTip(o)}</code>: ${escapeTip(TEXTFSM_OPTION_HELP[o] || 'Unknown option.')}</li>`).join('');
+        return `<div class="regex-tip-title">Value <code>${escapeTip(token.name)}</code> <code>${escapeTip(v.regex)}</code></div>`
+          + (opts ? `<ul class="regex-tip-groups">${opts}</ul>` : '')
+          + `<div>Used in ${refs.length} rule${refs.length === 1 ? '' : 's'}${refs.length ? ` (line ${escapeTip(Array.from(new Set(refs.map((r) => r.line))).join(', '))})` : ''}; captured on ${captures} input line${captures === 1 ? '' : 's'} (outlined in Text).</div>`;
+      }
+      if (token.type === 'option') {
+        showTemplateRanges([token]);
+        renderInput();
+        return `<div class="regex-tip-title"><code>${escapeTip(token.word)}</code></div><div>${escapeTip(TEXTFSM_OPTION_HELP[token.word] || 'Unknown option: TextFSM will reject the template.')}</div>`;
+      }
+      if (token.type === 'rule') {
+        const lines = new Set(trace.filter((t) => t.rule_line === token.line).map((t) => t.line));
+        showTemplateRanges([token]);
+        renderInput({ lines });
+        const regex = ruleRegex(token.line);
+        return `<div class="regex-tip-title">Rule on line ${token.line} (state ${escapeTip(token.state || '?')})</div>`
+          + (regex ? `<div>Regex TextFSM runs: <code>${escapeTip(regex)}</code></div>` : '')
+          + `<div>${lines.size ? `Matched ${lines.size} input line${lines.size === 1 ? '' : 's'} (highlighted in Text).` : '<span class="tip-warn">Matched no input line.</span>'}</div>`;
+      }
+      if (token.type === 'action') {
+        showTemplateRanges([token]);
+        renderInput();
+        return `<div class="regex-tip-title"><code>${escapeTip(token.word)}</code></div><div>${escapeTip(TEXTFSM_ACTION_HELP[token.word])}</div>`;
+      }
+      if (token.type === 'state' || token.type === 'statelink') {
+        const st = scan.states[token.name];
+        const links = scan.tokens.filter((t) => t.type === 'statelink' && t.name === token.name);
+        const stateRules = scan.rules.filter((r) => r.state === token.name);
+        showTemplateRanges([...(st ? [{ start: st.start, end: st.end }] : []), ...links]);
+        renderInput({ lines: new Set(trace.filter((t) => t.state === token.name).map((t) => t.line)) });
+        const help = TEXTFSM_STATE_HELP[token.name] ? `<div>${escapeTip(TEXTFSM_STATE_HELP[token.name])}</div>` : '';
+        if (!st && !TEXTFSM_STATE_HELP[token.name]) return `<div class="regex-tip-title">State <code>${escapeTip(token.name)}</code></div><div class="tip-error">This state is not defined.</div>`;
+        return `<div class="regex-tip-title">State <code>${escapeTip(token.name)}</code></div>${help}`
+          + (st ? `<div>Defined on line ${st.line} with ${stateRules.length} rule${stateRules.length === 1 ? '' : 's'}.</div>` : '')
+          + `<div>${links.length ? `Entered from line${links.length > 1 ? 's' : ''} ${escapeTip(links.map((l) => l.line).join(', '))}.` : (token.name === 'Start' ? 'Parsing starts here.' : '<span class="tip-warn">No rule jumps here.</span>')}</div>`;
+      }
+      return null;
+    });
+    template.addEventListener('mouseleave', clearFocus);
+    template.addEventListener('input', () => {
+      tmplLayer.innerHTML = '';
     });
     return;
   }
@@ -2240,15 +2673,28 @@ const toolCheatsheetRows = {
     ['Control', '"additionalProperties"', 'Allow or block unknown keys', '"additionalProperties": false']
   ],
   textfsm: [
-    ['Declarations', 'Value NAME (regex)', 'Capture field declaration', 'Value IFACE (\\S+)'],
-    ['States', 'Start', 'Initial parsing state', 'Start'],
-    ['Records', '-> Record', 'Emit parsed row', '^... -> Record'],
-    ['Variables', '${NAME}', 'Reference captured value', '^${IFACE}\\s+${IP}'],
-    ['Patterns', '^', 'Start-of-line anchor', '^Interface\\s+'],
-    ['Actions', '-> Continue', 'Stay in current state', '^\\s+ -> Continue'],
-    ['Actions', '-> Clear', 'Clear values before continue', '^! -> Clear'],
-    ['Flow', '-> StateName', 'Transition to another state', '^foo -> NextState'],
-    ['Templates', 'NTC library', 'Reference templates by platform/command and paste into Template field', 'https://github.com/networktocode/ntc-templates/tree/master/ntc_templates/templates']
+    ["Values", "Value NAME (regex)", "Declare a field; the regex must be in parentheses", "Value INTERFACE (\\S+)"],
+    ["Values", "Value Filldown NAME (...)", "Keep the value in following records (only Clearall clears it)", "Value Filldown VRF (\\S+)"],
+    ["Values", "Value Required NAME (...)", "Only save a record if this Value has a value", "Value Required NAME (\\S+)"],
+    ["Values", "Value List NAME (...)", "Collect every match into a list", "Value List IPS (\\S+)"],
+    ["Values", "Value Key NAME (...)", "Part of the record's unique key (for clitable merges)", "Value Key INTERFACE (\\S+)"],
+    ["Values", "Value Fillup NAME (...)", "Copy the value upward into earlier records that lack it", "Value Fillup VLAN (\\d+)"],
+    ["Values", "Value Filldown,Required ...", "Combine options with commas, no spaces", "Value Filldown,Required VRF (\\S+)"],
+    ["States", "Start", "Parsing begins here (required); a blank line separates Values from states", "Start"],
+    ["States", "EOF", "Runs at end of input and saves a final record; an empty EOF state turns that off", "EOF"],
+    ["States", "End", "Stop parsing; no final record", "^Total -> End"],
+    ["Rules", "  ^regex", "A rule: indented, starts with ^, matched against each input line", "  ^interface ${INTERFACE}"],
+    ["Rules", "${NAME} / $NAME", "Insert a Value's regex as a named group", "  ^ ip address ${IP}"],
+    ["Rules", "$$", "End of line ($ alone would start a Value name)", "  ^!$$"],
+    ["Actions", "-> Next", "Default: done with this line, read the next one", "  ^foo -> Next"],
+    ["Actions", "-> Continue", "Try the following rules on the SAME line (no state change allowed)", "  ^ intf ${NAME} -> Continue"],
+    ["Actions", "-> Record", "Save the current Values as a record, then clear them (not Filldown)", "  ^! -> Record"],
+    ["Actions", "-> Clear / -> Clearall", "Clear Values except Filldown / clear all Values", "  ^VRF -> Clearall"],
+    ["Actions", "-> Next.Record", "Line action and record action combined", "  ^$$ -> Next.Record"],
+    ["Actions", "-> Record NewState", "Record, then move to another state", "  ^! -> Record Start"],
+    ["Actions", "-> Error \"message\"", "Stop with an error (no records returned)", "  ^% Invalid -> Error \"bad command\""],
+    ["Other", "# comment", "Comment line (Values section or states)", "# show ip int brief"],
+    ["Templates", "ntc-templates", "Use the loader above the editors, or browse the library online", "https://github.com/networktocode/ntc-templates/tree/master/ntc_templates/templates"]
   ],
   ttp: [
     ['Groups', '<group name="x">', 'Define capture section', '<group name="interfaces">'],
@@ -2714,6 +3160,7 @@ const autoPreviewConfigs = {
 
 // Show an error as readable text (line breaks kept) instead of a JSON blob.
 function showOutput(outputEl, text, isError = false) {
+  delete outputEl.dataset.copy;
   outputEl.textContent = text;
   outputEl.classList.toggle('is-error', isError);
 }
@@ -3033,11 +3480,13 @@ async function runTool(tool, inputs, outputEl) {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (toolResultHooks[tool.id]) toolResultHooks[tool.id](data);
     if (autoPreviewConfigs[tool.id]) {
+      // Plain output first, then the tool's hook may replace it with a richer view.
       showOutput(outputEl, formatAutoPreviewOutput(tool.id, data), !(data && data.ok));
+      if (toolResultHooks[tool.id]) toolResultHooks[tool.id](data);
       return;
     }
+    if (toolResultHooks[tool.id]) toolResultHooks[tool.id](data);
     if (data && data.ok === true) {
       if (Object.prototype.hasOwnProperty.call(data, 'result')) {
         showOutput(outputEl, pretty(data.result));
@@ -3065,7 +3514,7 @@ function attachCopyButton(outputEl) {
   btn.textContent = 'Copy';
   btn.title = 'Copy output to clipboard';
   btn.addEventListener('click', async () => {
-    const text = outputEl.textContent || '';
+    const text = outputEl.dataset.copy || outputEl.textContent || '';
     try {
       await navigator.clipboard.writeText(text);
     } catch (err) {
