@@ -433,28 +433,6 @@ function createRegexCheatsheet() {
   return wrap;
 }
 
-function parseInlineRegexFlags(pattern) {
-  const inline = pattern.match(/^\(\?([a-zA-Z]+)\)/);
-  if (!inline) {
-    return { source: pattern, flags: '' };
-  }
-
-  const supported = new Set(['i', 'm', 's', 'u', 'y', 'g']);
-  const parsedFlags = Array.from(inline[1]).filter((flag) => supported.has(flag)).join('');
-  return {
-    source: pattern.slice(inline[0].length),
-    flags: parsedFlags
-  };
-}
-
-const regexIndicesSupported = (() => {
-  try {
-    return new RegExp('.', 'd').hasIndices === true;
-  } catch (err) {
-    return false;
-  }
-})();
-
 function buildMatchInnerHtml(text, matchStart, matchEnd, groups, matchId) {
   const innerGroups = (groups || [])
     .filter((g) => Number.isInteger(g.start) && Number.isInteger(g.end) && g.start >= matchStart && g.end <= matchEnd && g.end > g.start)
@@ -481,67 +459,49 @@ function buildMatchInnerHtml(text, matchStart, matchEnd, groups, matchId) {
   return html;
 }
 
-function buildRegexTextHighlights(text, rawPattern) {
-  if (!rawPattern.trim()) {
-    return { ok: true, html: escapeHtml(text), status: 'Enter a pattern to preview matches.', meta: [] };
+// Python reports positions in code points; JavaScript strings index UTF-16 units (they differ for emoji).
+function codePointToUnitMapper(text) {
+  if (!/[\uD800-\uDFFF]/.test(text)) return (i) => i;
+  const map = [];
+  let unit = 0;
+  for (const ch of text) {
+    map.push(unit);
+    unit += ch.length;
   }
+  map.push(unit);
+  return (i) => map[Math.min(i, map.length - 1)];
+}
 
-  const parsed = parseInlineRegexFlags(rawPattern);
-  const flags = Array.from(new Set(`${parsed.flags}g${regexIndicesSupported ? 'd' : ''}`)).join('');
-  let regex;
+// Build the highlight layer from the /api/regex result, so what you see is exactly what Python matched.
+function buildRegexHighlightsFromResult(text, data) {
+  const toUnit = codePointToUnitMapper(text);
+  const names = data.group_names || {};
+  const matches = (data.matches || []).map((m, id) => ({
+    id,
+    start: toUnit(m.start),
+    end: toUnit(m.end),
+    value: m.match,
+    groups: (m.groups || []).map((value, i) => {
+      const span = (m.spans || [])[i];
+      return {
+        group: i + 1,
+        name: names[String(i + 1)] || null,
+        value,
+        start: span ? toUnit(span[0]) : null,
+        end: span ? toUnit(span[1]) : null
+      };
+    })
+  }));
 
-  try {
-    regex = new RegExp(parsed.source, flags);
-  } catch (err) {
-    return { ok: false, html: escapeHtml(text), status: `Pattern error: ${err.message}`, meta: [] };
+  if (!matches.length) {
+    return { html: escapeHtml(text), meta: [], groupCount: 0 };
   }
 
   const segments = [];
-  const matches = [];
   let nextStart = 0;
-  let hit;
-  while ((hit = regex.exec(text)) !== null) {
-    const indexRange = regexIndicesSupported && hit.indices && hit.indices[0] ? hit.indices[0] : null;
-    const start = indexRange ? indexRange[0] : hit.index;
-    const end = indexRange ? indexRange[1] : start + hit[0].length;
-    if (end < start) {
-      break;
-    }
-    const groups = [];
-    for (let i = 1; i < hit.length; i += 1) {
-      const groupValue = hit[i];
-      let gStart = null;
-      let gEnd = null;
-      if (regexIndicesSupported && hit.indices && hit.indices[i]) {
-        gStart = hit.indices[i][0];
-        gEnd = hit.indices[i][1];
-      }
-      groups.push({
-        group: i,
-        value: groupValue,
-        start: Number.isInteger(gStart) ? gStart : null,
-        end: Number.isInteger(gEnd) ? gEnd : null
-      });
-    }
-    matches.push({
-      id: matches.length,
-      start,
-      end,
-      value: hit[0],
-      groups
-    });
-    if (hit[0] === '') {
-      regex.lastIndex += 1;
-      if (regex.lastIndex > text.length) break;
-    }
-  }
-
-  if (matches.length === 0) {
-    return { ok: true, html: escapeHtml(text), status: 'No matches yet.', meta: [] };
-  }
-
   let groupCount = 0;
   matches.forEach((matchInfo, idx) => {
+    if (matchInfo.start < nextStart || matchInfo.end > text.length) return;
     segments.push(escapeHtml(text.slice(nextStart, matchInfo.start)));
     const matchClass = `rgx-hit rgx-hit-p${idx % 10}`;
     const inner = buildMatchInnerHtml(text, matchInfo.start, matchInfo.end, matchInfo.groups, matchInfo.id);
@@ -550,14 +510,42 @@ function buildRegexTextHighlights(text, rawPattern) {
     groupCount += matchInfo.groups.filter((g) => g.value !== undefined && g.value !== null).length;
   });
   segments.push(escapeHtml(text.slice(nextStart)));
-
-  return {
-    ok: true,
-    html: segments.join(''),
-    status: `${matches.length} match${matches.length === 1 ? '' : 'es'} and ${groupCount} group${groupCount === 1 ? '' : 's'} highlighted in real-time.`,
-    meta: matches
-  };
+  return { html: segments.join(''), meta: matches, groupCount };
 }
+
+// Portability report: does this pattern behave the same in grep and on Cisco IOS?
+function renderRegexPortability(container, report) {
+  container.innerHTML = '';
+  if (!report || !report.length) {
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+  const icons = { ok: '\u2713', warn: '!', error: '\u2717' };
+  const title = document.createElement('div');
+  title.className = 'rp-title';
+  title.textContent = 'Will this pattern work elsewhere?';
+  container.appendChild(title);
+  const list = document.createElement('ul');
+  list.className = 'rp-list';
+  report.forEach((r) => {
+    const li = document.createElement('li');
+    li.className = `rp-item rp-${r.level}`;
+    const hints = (r.hints || []).map((h) => `<li>${escapeHtml(h)}</li>`).join('');
+    li.innerHTML = `
+      <span class="rp-icon" aria-hidden="true">${icons[r.level] || '?'}</span>
+      <div class="rp-body">
+        <div><strong>${escapeHtml(r.label)}</strong> <span class="rp-engine">${r.engine === 'tested' ? 'tested' : 'rules'}</span></div>
+        <div class="rp-summary">${escapeHtml(r.summary || '')}</div>
+        ${hints ? `<ul class="rp-hints">${hints}</ul>` : ''}
+      </div>`;
+    list.appendChild(li);
+  });
+  container.appendChild(list);
+}
+
+// Per-tool callbacks that receive each API result (from Run or auto preview).
+const toolResultHooks = {};
 
 // "Where it's used" panel per tool: what it is, where you meet it in practice, typical tasks, docs.
 const toolAbout = {
@@ -577,11 +565,12 @@ const toolAbout = {
     docs: 'https://jinja.palletsprojects.com/en/stable/templates/'
   },
   regex: {
-    what: 'Regular expressions describe text patterns. This tester uses Python’s re syntax.',
+    what: 'Regular expressions describe text patterns. This tester matches with Python’s re module (the same engine as Ansible, TextFSM and TTP), and checks whether the pattern also works in grep and on Cisco IOS/IOS-XE.',
     usedIn: [
       'Python scripts (re module), and every parser below: TextFSM Value definitions are regexes',
       'Ansible filters: regex_search, regex_replace, regex_findall',
-      'Device CLI: "show run | include", and BGP AS-path access-lists (Cisco IOS regex is close to, but not the same as, Python’s)',
+      'Device CLI: "show run | include", BGP AS-path access-lists and community lists (Cisco IOS regex is simpler than Python’s: see the portability check)',
+      'Linux: grep, sed and awk (POSIX flavours; grep -P is close to Python)',
       'Log tools (syslog filters, Splunk, Graylog) and editors’ search and replace'
     ],
     tasks: [
@@ -1287,10 +1276,16 @@ function formatAutoPreviewOutput(toolId, data) {
     return pretty(data.result);
   }
   if (toolId === 'regex') {
-    return pretty({
-      count: data.count,
-      matches: data.matches || []
+    const matches = (data.matches || []).map((m) => {
+      const item = { match: m.match, start: m.start, end: m.end, groups: m.groups };
+      if (m.named) item.named = m.named;
+      return item;
     });
+    const summary = pretty({ count: data.count, truncated: data.truncated || undefined, matches });
+    if (typeof data.replaced === 'string') {
+      return `Replaced text (${data.replace_count} substitution${data.replace_count === 1 ? '' : 's'}):\n${data.replaced}\n\nMatches:\n${summary}`;
+    }
+    return summary;
   }
   return pretty(data);
 }
@@ -1348,6 +1343,7 @@ function attachAutoPreview(tool, inputs, outputEl, panel) {
       if (reqId !== activeRequestId) return;
 
       showOutput(outputEl, formatAutoPreviewOutput(tool.id, data), !data.ok);
+      if (toolResultHooks[tool.id]) toolResultHooks[tool.id](data);
       if (data.ok) {
         status.textContent = 'Preview updated.';
         status.title = '';
@@ -1365,6 +1361,11 @@ function attachAutoPreview(tool, inputs, outputEl, panel) {
   };
 
   const schedulePreview = debounce(runPreview, config.delayMs || 500);
+  const syncPanelFlag = () => {
+    panel.dataset.autoPreview = toggle.checked ? 'on' : 'off';
+  };
+  syncPanelFlag();
+  toggle.addEventListener('change', syncPanelFlag);
   Object.entries(inputs).forEach(([key, el]) => {
     if (key.startsWith('__')) return;
     const evt = el.tagName === 'SELECT' ? 'change' : 'input';
@@ -1522,7 +1523,8 @@ function buildRegexHoverHtml(matchInfo, hoveredGroupId = null) {
     const pos = hasPos ? `[${g.start}, ${g.end})` : '[?, ?)';
     const mark = hoveredGroupId === g.group ? ' <strong>(hovered)</strong>' : '';
     const val = g.value === undefined || g.value === null ? '(no capture)' : g.value;
-    return `<li><code>Group ${g.group}</code>${mark} ${escapeTip(pos)} = <code>${escapeTip(val)}</code></li>`;
+    const label = g.name ? `Group ${g.group} (${g.name})` : `Group ${g.group}`;
+    return `<li><code>${escapeTip(label)}</code>${mark} ${escapeTip(pos)} = <code>${escapeTip(val)}</code></li>`;
   }).join('');
 
   return `
@@ -1554,6 +1556,11 @@ async function runTool(tool, inputs, outputEl) {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
+    if (toolResultHooks[tool.id]) toolResultHooks[tool.id](data);
+    if (autoPreviewConfigs[tool.id]) {
+      showOutput(outputEl, formatAutoPreviewOutput(tool.id, data), !(data && data.ok));
+      return;
+    }
     if (data && data.ok === true) {
       if (Object.prototype.hasOwnProperty.call(data, 'result')) {
         showOutput(outputEl, pretty(data.result));
@@ -2026,28 +2033,123 @@ function init() {
         textInput.addEventListener('blur', hideTip);
         textInput.addEventListener('scroll', hideTip);
 
-        const syncHighlights = () => {
-          const result = buildRegexTextHighlights(textInput.value, patternInput.value);
-          highlightLayer.innerHTML = result.html;
-          if (!textInput.value.endsWith('\n')) {
-            highlightLayer.innerHTML += '\n';
+        const portabilityBox = document.createElement('div');
+        portabilityBox.className = 'regex-portability';
+        portabilityBox.hidden = true;
+        textField.appendChild(portabilityBox);
+
+        const renderPlain = () => {
+          highlightLayer.innerHTML = escapeHtml(textInput.value) + (textInput.value.endsWith('\n') ? '' : '\n');
+          latestMatchMeta = [];
+          hideTip();
+        };
+
+        // While typing, show the plain text (so the layer stays aligned) until the next result arrives.
+        const onEdit = () => {
+          renderPlain();
+          status.classList.remove('error');
+          status.textContent = panel.dataset.autoPreview === 'off'
+            ? 'Auto preview is paused: press Run to update the highlights.'
+            : 'Updating...';
+        };
+
+        toolResultHooks.regex = (data) => {
+          if (!data || data.ok !== true) {
+            renderPlain();
+            status.textContent = ((data && data.error) || 'Pattern error.').split('\n')[0];
+            status.classList.add('error');
+            renderRegexPortability(portabilityBox, data && data.portability);
+            return;
           }
-          latestMatchMeta = result.meta || [];
-          status.textContent = result.status;
-          status.classList.toggle('error', !result.ok);
-          if (!result.ok) {
-            hideTip();
-          }
+          const result = buildRegexHighlightsFromResult(textInput.value, data);
+          highlightLayer.innerHTML = result.html + (textInput.value.endsWith('\n') ? '' : '\n');
+          latestMatchMeta = result.meta;
+          const n = data.count || 0;
+          status.classList.remove('error');
+          status.textContent = n
+            ? `${n}${data.truncated ? '+' : ''} match${n === 1 ? '' : 'es'} and ${result.groupCount} group${result.groupCount === 1 ? '' : 's'} highlighted (Python re).`
+            : 'No matches.';
+          renderRegexPortability(portabilityBox, data.portability);
         };
 
         textInput.addEventListener('scroll', () => {
           highlightLayer.scrollTop = textInput.scrollTop;
           highlightLayer.scrollLeft = textInput.scrollLeft;
         });
-        textInput.addEventListener('input', syncHighlights);
-        patternInput.addEventListener('input', syncHighlights);
-        syncHighlights();
+        textInput.addEventListener('input', onEdit);
+        patternInput.addEventListener('input', () => {
+          status.classList.remove('error');
+          status.textContent = panel.dataset.autoPreview === 'off' ? 'Auto preview is paused: press Run.' : 'Updating...';
+        });
+        renderPlain();
       }
+
+      // Flags and replace mode, between the Pattern and Text fields.
+      const optionsRow = document.createElement('div');
+      optionsRow.className = 'field regex-options';
+      const flagsInput = document.createElement('input');
+      flagsInput.type = 'hidden';
+      flagsInput.value = '';
+      inputs.flags = flagsInput;
+      const flagDefs = [
+        ['i', 'ignore case'],
+        ['m', 'multiline (^ $ per line)'],
+        ['s', 'dot matches newline'],
+        ['x', 'verbose (spaces and # comments ignored)']
+      ];
+      const flagBoxes = [];
+      const flagGroup = document.createElement('div');
+      flagGroup.className = 'regex-flag-group';
+      const flagLabel = document.createElement('span');
+      flagLabel.className = 'regex-options-label';
+      flagLabel.textContent = 'Flags';
+      flagGroup.appendChild(flagLabel);
+      flagDefs.forEach(([flag, text]) => {
+        const label = document.createElement('label');
+        label.className = 'live-preview-toggle regex-flag';
+        label.title = `Python re.${{ i: 'IGNORECASE', m: 'MULTILINE', s: 'DOTALL', x: 'VERBOSE' }[flag]} (same as (?${flag}) in the pattern)`;
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.addEventListener('change', () => {
+          flagsInput.value = flagBoxes.filter(([, b]) => b.checked).map(([f]) => f).join('');
+          flagsInput.dispatchEvent(new Event('input'));
+        });
+        flagBoxes.push([flag, box]);
+        const code = document.createElement('code');
+        code.textContent = flag;
+        const span = document.createElement('span');
+        span.textContent = text;
+        label.append(box, code, span);
+        flagGroup.appendChild(label);
+      });
+
+      const replaceGroup = document.createElement('div');
+      replaceGroup.className = 'regex-replace-group';
+      const replaceLabel = document.createElement('label');
+      replaceLabel.className = 'live-preview-toggle';
+      replaceLabel.title = 'Preview re.sub / Ansible regex_replace. Use \\1 or \\g<name> for groups.';
+      const replaceToggle = document.createElement('input');
+      replaceToggle.type = 'checkbox';
+      inputs.replace_enabled = replaceToggle;
+      const replaceText = document.createElement('span');
+      replaceText.textContent = 'Replace with';
+      replaceLabel.append(replaceToggle, replaceText);
+      const replaceInput = document.createElement('input');
+      replaceInput.type = 'text';
+      replaceInput.className = 'regex-replace-input';
+      replaceInput.placeholder = 'e.g. \\1 or \\g<name> (empty = delete matches)';
+      replaceInput.disabled = true;
+      replaceInput.spellcheck = false;
+      inputs.replacement = replaceInput;
+      replaceToggle.addEventListener('change', () => {
+        replaceInput.disabled = !replaceToggle.checked;
+        if (replaceToggle.checked) replaceInput.focus();
+      });
+      replaceGroup.append(replaceLabel, replaceInput);
+
+      optionsRow.append(flagGroup, replaceGroup);
+      const patternField = panel.querySelector('.field[data-key="pattern"]');
+      if (patternField) patternField.after(optionsRow);
 
       panel.querySelector('.grid').after(createRegexCheatsheet());
     }

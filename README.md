@@ -11,7 +11,7 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 ## Feature Set
 
 - `J2 Renderer` (Jinja2 template rendering, with an optional NetBox mode)
-- `Regex Tester`
+- `Regex Tester` (Python `re`, with flags, named groups, replace preview, and a portability check for `grep -E`/`grep -P` and Cisco IOS/IOS-XE)
 - `TextFSM Parser` for structured extraction from CLI output
 - `Data Format Converter` (`JSON <-> XML <-> YAML`)
 - `JMESPath Validator` for JSON filtering and selection
@@ -41,6 +41,19 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 - Validate new payloads against inferred schema before they reach automation code
 - Catch data drift early (missing fields, type mismatches, structural changes)
 - Speed up model design when integrating new APIs, telemetry, or inventory sources
+
+## Regex Tester: Which Engine?
+
+Matches and highlights come from Python's `re` module, which is also what Ansible (`regex_search`,
+`regex_replace`), TextFSM, TTP and Netmiko use. Under the text, a portability check shows whether the
+same pattern works in:
+
+- `grep -P` and `grep -E` / `sed -E` / `awk`: tested with the real `grep` when it is installed
+- Cisco IOS/IOS-XE (`| include`, `show ip bgp regexp`, AS-path and community lists): rule-based, with
+  hints such as `\d` -> `[0-9]` and what `_` means in BGP regexes
+
+Each pattern runs in a separate process with a 2-second limit, so a runaway pattern such as `(a+)+$`
+is stopped instead of hanging the app.
 
 ## J2 Renderer: NetBox Mode
 
@@ -116,6 +129,7 @@ GitHub Actions for every push and pull request (`.github/workflows/tests.yml`).
 ```text
 .
 ├── app.py                  # Flask app and all API endpoints
+├── regex_engine.py         # Regex Tester: time-limited matching and portability rules
 ├── templates/
 │   └── index.html          # Page shell
 ├── static/

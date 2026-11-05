@@ -201,3 +201,100 @@ def test_python_playground_lint(client):
     bad = post(client, "/api/python-playground", action="lint", function_code="def f(:\n  pass", var1="", var2="", var3="")
     assert bad["result"]["syntax"]["valid"] is False
     assert bad["result"]["syntax"]["line"] == 1
+
+
+# --- Regex Tester: Python engine, flags, replace, timeout, portability ---------------
+
+import shutil
+
+import regex_engine
+
+needs_grep = pytest.mark.skipif(shutil.which("grep") is None, reason="grep not installed")
+
+
+def levels(data):
+    return {p["id"]: p["level"] for p in data["portability"]}
+
+
+def test_regex_spans_and_named_groups(client):
+    data = post(client, "/api/regex", pattern=r"(?P<intf>Gi\S+) (\d+)?", text="Gi0/1 x")
+    m = data["matches"][0]
+    assert m["groups"] == ["Gi0/1", None]
+    assert m["spans"] == [[0, 5], None]
+    assert m["named"] == {"intf": "Gi0/1"}
+    assert data["group_names"] == {"1": "intf"}
+
+
+def test_regex_flags(client):
+    assert post(client, "/api/regex", pattern="gi", text="Gi0/1")["count"] == 0
+    assert post(client, "/api/regex", pattern="gi", text="Gi0/1", flags="i")["count"] == 1
+    assert post(client, "/api/regex", pattern="^b", text="a\nb", flags="m")["count"] == 1
+    assert post(client, "/api/regex", pattern="a.b", text="a\nb", flags="s")["count"] == 1
+
+
+def test_regex_replace(client):
+    data = post(client, "/api/regex", pattern=r"Gi(\d+)/(\d+)", text="Gi0/1 Gi0/2",
+                replace_enabled=True, replacement=r"GigabitEthernet\1/\2")
+    assert data["replaced"] == "GigabitEthernet0/1 GigabitEthernet0/2"
+    assert data["replace_count"] == 2
+    deleted = post(client, "/api/regex", pattern=r"\s+", text="a b", replace_enabled=True, replacement="")
+    assert deleted["replaced"] == "ab"
+    off = post(client, "/api/regex", pattern="a", text="a", replace_enabled=False, replacement="x")
+    assert "replaced" not in off
+
+
+def test_regex_timeout_stops_catastrophic_pattern(client, monkeypatch):
+    monkeypatch.setattr(regex_engine, "TIMEOUT_SECONDS", 0.5)
+    data = post(client, "/api/regex", pattern=r"(a+)+$", text="a" * 40 + "b")
+    assert data["ok"] is False and data["timeout"] is True
+    # The server keeps working afterwards.
+    assert post(client, "/api/regex", pattern=r"\d", text="a1")["count"] == 1
+
+
+def test_regex_pattern_error_still_reports_portability(client):
+    data = post(client, "/api/regex", pattern=r"(?<name>x)", text="x")
+    assert data["ok"] is False
+    assert levels(data)["python"] == "error"
+
+
+def test_regex_cisco_rules(client):
+    digits = post(client, "/api/regex", pattern=r"\d+", text="65001")
+    assert levels(digits)["cisco"] == "error"
+    as_path = post(client, "/api/regex", pattern=r"^65001_[0-9]+$", text="65001_65002")
+    assert levels(as_path)["cisco"] == "ok"
+    cisco = next(p for p in as_path["portability"] if p["id"] == "cisco")
+    assert any("separator" in h for h in cisco["hints"])
+
+
+@needs_grep
+def test_regex_grep_real_engine(client):
+    digits = post(client, "/api/regex", pattern=r"\d+", text="abc 123\nxyz")
+    assert levels(digits)["grep_p"] == "ok"
+    assert levels(digits)["grep_e"] == "error"
+    lazy = post(client, "/api/regex", pattern=r"a+?", text="aa\nb")
+    assert levels(lazy)["grep_e"] == "error"
+    plain = post(client, "/api/regex", pattern=r"[0-9]+", text="abc 123\nxyz")
+    assert levels(plain)["grep_e"] == "ok"
+
+
+def test_regex_features_detection():
+    f = regex_engine.features
+    assert {"digit", "lazy"} <= f(r"\d+?")
+    assert "lookaround" in f(r"(?=x)a")
+    assert "named_group" in f(r"(?P<a>x)")
+    assert "noncapture" in f(r"(?:x)")
+    assert "backref" in f(r"(a)\1")
+    assert "interval" in f(r"a{2,3}")
+    assert "interval" not in f(r"a+b*c?")
+    assert "posix_class" in f(r"[[:digit:]]")
+    assert "underscore" in f(r"_65001_")
+
+
+def test_regex_line_anchor_note(client):
+    data = post(client, "/api/regex", pattern=r"^65001_[0-9]+$", text="65001_65002\n65002_65001")
+    python = next(p for p in data["portability"] if p["id"] == "python")
+    assert any("multiline" in h for h in python["hints"])
+    assert python["level"] == "ok"
+    with_m = post(client, "/api/regex", pattern=r"^65001_[0-9]+$", text="65001_65002\n65002_65001", flags="m")
+    assert with_m["count"] == 1
+    assert not next(p for p in with_m["portability"] if p["id"] == "python")["hints"]

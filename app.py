@@ -31,6 +31,8 @@ from jsonschema import ValidationError, validate
 from lxml import etree
 from ttp import ttp
 
+import regex_engine
+
 app = Flask(__name__)
 FUNCTION_REPL_SESSIONS = {}
 
@@ -627,27 +629,41 @@ def python_playground():
 
 @app.post("/api/regex")
 def regex_tester():
+    """
+    Match with Python re (in a time-limited subprocess). Optional: flags ("imsx"), replacement
+    (when replace_enabled), and a portability report for grep and Cisco IOS.
+    """
     payload = request.get_json(silent=True) or {}
     pattern = payload.get("pattern", "")
     text = payload.get("text", "")
+    flags = "".join(ch for ch in str(payload.get("flags", "") or "") if ch in regex_engine.FLAG_MAP)
+    replace_enabled = payload.get("replace_enabled") in (True, "true", "on", "1")
+    replacement = payload.get("replacement", "") if replace_enabled else None
+    want_portability = payload.get("portability", True) not in (False, "false", "0")
 
     if not pattern:
         return error_response("Regex pattern is required.")
 
+    def report(python_lines=None, python_error=None):
+        if not want_portability:
+            return None
+        return regex_engine.portability(pattern, flags, text, python_lines, python_error)
+
     try:
-        compiled = re.compile(pattern)
-        matches = [
-            {
-                "match": m.group(0),
-                "groups": list(m.groups()),
-                "start": m.start(),
-                "end": m.end(),
-            }
-            for m in compiled.finditer(text)
-        ]
-        return jsonify({"ok": True, "count": len(matches), "matches": matches})
+        result = regex_engine.analyze(pattern, text, flags, replacement)
+    except re.error as exc:
+        message = f"Pattern error: {exc}"
+        return jsonify({"ok": False, "error": message, "portability": report(python_error=message)}), 400
+    except regex_engine.RegexTimeout as exc:
+        return jsonify({"ok": False, "error": str(exc), "timeout": True}), 400
     except Exception as exc:
         return error_response(str(exc))
+
+    response = {"ok": True, **result}
+    portability = report(python_lines=result["matching_lines"])
+    if portability is not None:
+        response["portability"] = portability
+    return jsonify(response)
 
 
 @app.post("/api/base64")
