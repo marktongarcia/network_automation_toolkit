@@ -25,7 +25,8 @@ import textfsm
 import xmltodict
 import yaml
 from flask import Flask, jsonify, render_template, request
-from jinja2 import Environment, StrictUndefined
+from jinja2 import BaseLoader, Environment, StrictUndefined, TemplateSyntaxError
+from jinja2.sandbox import SandboxedEnvironment
 from jsonschema import ValidationError, validate
 from lxml import etree
 from ttp import ttp
@@ -368,6 +369,41 @@ def data_model_workbench():
         return error_response(str(exc))
 
 
+NETBOX_APP_LABELS = {
+    "circuits", "core", "dcim", "extras", "ipam", "tenancy", "users", "virtualization", "vpn", "wireless",
+}
+
+
+def netbox_env_filter(name):
+    """Stand-in for NetBox's `env` filter: no JINJA_ENVIRONMENT_PARAMS are allowed here, so it returns None."""
+    return None
+
+
+def netbox_template_line(exc: Exception):
+    """Return the template line number for a Jinja2 error, or None if it cannot be determined."""
+    if isinstance(exc, TemplateSyntaxError):
+        return exc.lineno
+    lines = [f.lineno for f in traceback.extract_tb(exc.__traceback__) if f.filename == "<template>"]
+    return lines[-1] if lines else None
+
+
+def render_netbox_mode(template_text: str, variables: Any) -> str:
+    """
+    Render the way NetBox 4.7.4 renders a config template with no environment_params
+    (utilities/jinja2.py: render_jinja2): SandboxedEnvironment, BaseLoader, default Undefined,
+    no trim_blocks/lstrip_blocks, autoescape off, NetBox default filters, CRLF -> LF.
+    The NetBox model context (dcim.Device, ipam.Prefix, ...) is not available.
+    """
+    if not isinstance(variables, dict):
+        raise ValueError(
+            f"NetBox mode needs variables to be a mapping (key: value) at the top level, got {type(variables).__name__}."
+        )
+    env = SandboxedEnvironment(loader=BaseLoader())
+    env.filters["env"] = netbox_env_filter
+    output = env.from_string(template_text).render(**variables)
+    return output.replace("\r\n", "\n")
+
+
 @app.post("/api/jinja2")
 def jinja2_renderer():
     payload = request.get_json(silent=True) or {}
@@ -377,6 +413,27 @@ def jinja2_renderer():
 
     if not template_text.strip():
         return error_response("Template is required.")
+
+    if payload.get("netbox_mode") in (True, "true", "on", "1"):
+        try:
+            variables = parse_structured_input(vars_format, vars_text)
+        except Exception as exc:
+            return error_response(f"Variables ({vars_format}): {exc}")
+        try:
+            variables = {} if variables is None else variables
+            return jsonify({"ok": True, "result": render_netbox_mode(template_text, variables)})
+        except Exception as exc:
+            line = netbox_template_line(exc)
+            where = f"Template line {line}: " if line else ""
+            hint = ""
+            app_label = re.fullmatch(r"'(\w+)' is undefined", str(exc))
+            if app_label and app_label.group(1) in NETBOX_APP_LABELS:
+                hint = (
+                    f"\n\nHint: '{app_label.group(1)}' is a NetBox model namespace (e.g. ipam.Prefix.objects...). "
+                    "The template queries the NetBox database, which is not available here. "
+                    "Pass the data in as variables instead, or test this template inside NetBox."
+                )
+            return error_response(f"{where}{type(exc).__name__}: {exc}{hint}")
 
     try:
         variables = parse_structured_input(vars_format, vars_text)
