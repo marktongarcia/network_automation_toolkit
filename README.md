@@ -16,12 +16,13 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 - `JMESPath Validator` for JSON filtering and selection
 - `Data Format Converter` (`JSON <-> XML <-> YAML`)
 - `Data Model Workbench` to infer JSON Schema/Pydantic models and validate payloads
-- `J2 Renderer` (Jinja2 template rendering)
+- `J2 Renderer` (Jinja2 template rendering, with an optional NetBox mode)
 - `TTP Parser` for semi-structured text parsing
 - `Python Playground` with session state and terminal-style prompt
 - `Regex Tester`
 - `Base64 Utility`
 - Theme selector with `Sand`, `Solarized`, `Light`, and `Dark` palettes (saved in browser)
+- `Ctrl+Enter` runs the current tool, a `Copy` button on every output, and the last-used tab is remembered
 
 ## Python Playground Highlights
 
@@ -41,6 +42,22 @@ When you are troubleshooting automation logic, you often need multiple tools ope
 - Catch data drift early (missing fields, type mismatches, structural changes)
 - Speed up model design when integrating new APIs, telemetry, or inventory sources
 
+## J2 Renderer: NetBox Mode
+
+The **NetBox mode** checkbox in the J2 Renderer is off by default; with it off, the renderer works as before.
+
+Ticking it:
+
+- loads a NetBox-style sample: a device with interfaces, IP addresses, VLANs and prefixes, shaped like
+  NetBox REST API data (`/api/dcim/...`, `/api/ipam/...`), in JSON or YAML
+- renders the way a NetBox 4.7.4 config template does with no `environment_params`: sandboxed,
+  autoescape off, no `trim_blocks`/`lstrip_blocks`, missing variables render empty (`Undefined`, not
+  `StrictUndefined`), a stub `env` filter, CRLF converted to LF
+- shows the template line number in errors
+
+If you have edited the template or variables, you are asked before they are replaced. NetBox models
+(`dcim.Device`, `ipam.Prefix`, ...) are not available, so templates must read their data from variables.
+
 ## Quick Start
 
 ```bash
@@ -57,6 +74,16 @@ Optional debug mode:
 ```bash
 FLASK_DEBUG=1 ./app.py
 ```
+
+## Running Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The tests call every API endpoint through Flask's test client (no server needed). They also run on
+GitHub Actions for every push and pull request (`.github/workflows/tests.yml`).
 
 ## Screenshots
 
@@ -88,15 +115,19 @@ FLASK_DEBUG=1 ./app.py
 
 ```text
 .
-├── app.py
-├── docs/
-│   └── images/
-├── requirements.txt
+├── app.py                  # Flask app and all API endpoints
+├── templates/
+│   └── index.html          # Page shell
 ├── static/
-│   ├── app.js
-│   └── style.css
-└── templates/
-    └── index.html
+│   ├── app.js              # Tool definitions, editors, live preview, cheatsheets
+│   └── style.css           # Layout and themes
+├── tests/
+│   └── test_app.py         # Endpoint tests (pytest)
+├── images/                 # Screenshots used in this README
+├── docs/images/            # Earlier screenshots kept for reference
+├── requirements.txt
+├── requirements-dev.txt    # requirements.txt + pytest
+└── pytest.ini
 ```
 
 ## Security Notes

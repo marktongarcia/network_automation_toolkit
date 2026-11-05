@@ -151,6 +151,12 @@ const j2FallbackVars = {
   json: '{\n  "hostname": "R1-EDGE",\n  "loopback": {\n    "ip": "192.168.255.1",\n    "mask": "255.255.255.255"\n  },\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "description": "WAN_TO_ISP",\n      "ip": "10.10.10.1",\n      "mask": "255.255.255.252",\n      "shutdown": false\n    },\n    {\n      "name": "GigabitEthernet0/1",\n      "description": "LAN_USERS",\n      "ip": "172.16.20.1",\n      "mask": "255.255.255.0",\n      "shutdown": false\n    }\n  ]\n}',
   yaml: 'hostname: R1-EDGE\nloopback:\n  ip: 192.168.255.1\n  mask: 255.255.255.255\ninterfaces:\n  - name: GigabitEthernet0/0\n    description: WAN_TO_ISP\n    ip: 10.10.10.1\n    mask: 255.255.255.252\n    shutdown: false\n  - name: GigabitEthernet0/1\n    description: LAN_USERS\n    ip: 172.16.20.1\n    mask: 255.255.255.0\n    shutdown: false\n'
 };
+// Sample used by the J2 Renderer when NetBox mode is ticked. Variables are shaped like NetBox REST API data.
+const j2NetboxSample = {
+  template: "{#- NetBox sample. Variables are shaped like NetBox REST API data (dcim + ipam). -#}\nhostname {{ device.name }}\n! {{ device.device_type.manufacturer.name }} {{ device.device_type.model }} | site {{ device.site.name }} | role {{ device.role.name }} | {{ device.status.label }}\n!\n{%- for vlan in vlans %}\nvlan {{ vlan.vid }}\n   name {{ vlan.name }}\n{%- endfor %}\n!\n{%- for intf in interfaces %}\ninterface {{ intf.name }}\n{%- if intf.description %}\n   description {{ intf.description }}\n{%- endif %}\n{%- if intf.mode and intf.mode.value == \"access\" %}\n   switchport access vlan {{ intf.untagged_vlan.vid }}\n{%- endif %}\n{%- for ip in ip_addresses if ip.assigned_object.name == intf.name %}\n   ip address {{ ip.address }}\n{%- endfor %}\n   {{ \"no shutdown\" if intf.enabled else \"shutdown\" }}\n!\n{%- endfor %}\n{%- for p in prefixes %}\nip prefix-list {{ device.site.slug | upper }}-LOCAL seq {{ loop.index * 10 }} permit {{ p.prefix }}\n{%- endfor %}\n!\nsnmp-server location {{ device.custom_fields.snmp_location | default(\"unknown\", true) }}\n",
+  json: "{\n  \"device\": {\n    \"id\": 101,\n    \"name\": \"lab-leaf-01\",\n    \"device_type\": {\n      \"manufacturer\": {\n        \"name\": \"Arista\",\n        \"slug\": \"arista\"\n      },\n      \"model\": \"DCS-7050SX3-48YC8\"\n    },\n    \"role\": {\n      \"name\": \"Leaf\",\n      \"slug\": \"leaf\"\n    },\n    \"platform\": {\n      \"name\": \"EOS\",\n      \"slug\": \"eos\"\n    },\n    \"site\": {\n      \"name\": \"Lab DC1\",\n      \"slug\": \"lab-dc1\"\n    },\n    \"status\": {\n      \"value\": \"active\",\n      \"label\": \"Active\"\n    },\n    \"primary_ip4\": {\n      \"address\": \"10.255.0.11/32\"\n    },\n    \"custom_fields\": {\n      \"snmp_location\": \"Lab DC1, Row A, Rack 3\"\n    }\n  },\n  \"interfaces\": [\n    {\n      \"name\": \"Ethernet1\",\n      \"description\": \"uplink to lab-spine-01\",\n      \"enabled\": true,\n      \"mode\": null\n    },\n    {\n      \"name\": \"Ethernet2\",\n      \"description\": \"server01\",\n      \"enabled\": true,\n      \"mode\": {\n        \"value\": \"access\",\n        \"label\": \"Access\"\n      },\n      \"untagged_vlan\": {\n        \"vid\": 110,\n        \"name\": \"SERVERS\"\n      }\n    },\n    {\n      \"name\": \"Ethernet3\",\n      \"description\": \"\",\n      \"enabled\": false,\n      \"mode\": null\n    },\n    {\n      \"name\": \"Loopback0\",\n      \"description\": \"router-id\",\n      \"enabled\": true,\n      \"mode\": null\n    }\n  ],\n  \"ip_addresses\": [\n    {\n      \"address\": \"10.0.1.1/31\",\n      \"assigned_object\": {\n        \"name\": \"Ethernet1\"\n      }\n    },\n    {\n      \"address\": \"10.255.0.11/32\",\n      \"assigned_object\": {\n        \"name\": \"Loopback0\"\n      }\n    }\n  ],\n  \"vlans\": [\n    {\n      \"vid\": 110,\n      \"name\": \"SERVERS\"\n    },\n    {\n      \"vid\": 120,\n      \"name\": \"STORAGE\"\n    }\n  ],\n  \"prefixes\": [\n    {\n      \"prefix\": \"10.110.0.0/24\",\n      \"vlan\": {\n        \"vid\": 110\n      },\n      \"status\": {\n        \"value\": \"active\"\n      }\n    },\n    {\n      \"prefix\": \"10.120.0.0/24\",\n      \"vlan\": {\n        \"vid\": 120\n      },\n      \"status\": {\n        \"value\": \"active\"\n      }\n    }\n  ]\n}",
+  yaml: "# Shaped like NetBox REST API objects: /api/dcim/devices/, /api/dcim/interfaces/,\n# /api/ipam/ip-addresses/, /api/ipam/vlans/, /api/ipam/prefixes/ (trimmed to useful fields).\ndevice:\n  id: 101\n  name: lab-leaf-01\n  device_type:\n    manufacturer: {name: Arista, slug: arista}\n    model: DCS-7050SX3-48YC8\n  role: {name: Leaf, slug: leaf}\n  platform: {name: EOS, slug: eos}\n  site: {name: Lab DC1, slug: lab-dc1}\n  status: {value: active, label: Active}\n  primary_ip4: {address: 10.255.0.11/32}\n  custom_fields:\n    snmp_location: Lab DC1, Row A, Rack 3\ninterfaces:\n  - name: Ethernet1\n    description: uplink to lab-spine-01\n    enabled: true\n    mode: null\n  - name: Ethernet2\n    description: server01\n    enabled: true\n    mode: {value: access, label: Access}\n    untagged_vlan: {vid: 110, name: SERVERS}\n  - name: Ethernet3\n    description: \"\"\n    enabled: false\n    mode: null\n  - name: Loopback0\n    description: router-id\n    enabled: true\n    mode: null\nip_addresses:\n  - address: 10.0.1.1/31\n    assigned_object: {name: Ethernet1}\n  - address: 10.255.0.11/32\n    assigned_object: {name: Loopback0}\nvlans:\n  - {vid: 110, name: SERVERS}\n  - {vid: 120, name: STORAGE}\nprefixes:\n  - {prefix: 10.110.0.0/24, vlan: {vid: 110}, status: {value: active}}\n  - {prefix: 10.120.0.0/24, vlan: {vid: 120}, status: {value: active}}\n"
+};
 const dataModelFallback = {
   sample: {
     json: '{\n  "hostname": "R1-EDGE",\n  "site": "NYC1",\n  "asn": 65001,\n  "interfaces": [\n    {\n      "name": "GigabitEthernet0/0",\n      "enabled": true,\n      "ip": "10.10.10.1/30"\n    },\n    {\n      "name": "GigabitEthernet0/1",\n      "enabled": true,\n      "ip": "172.16.20.1/24"\n    }\n  ]\n}',
@@ -604,12 +610,48 @@ const toolCheatsheetRows = {
     ['End', '</group>', 'Close group section', '</group>']
   ],
   jinja2: [
-    ['Output', '{{ var }}', 'Render variable value', '{{ hostname }}'],
-    ['Control', '{% for x in xs %}', 'Loop block', '{% for i in interfaces %}'],
-    ['Control', '{% if cond %}', 'Conditional block', '{% if intf.shutdown %}'],
-    ['Filters', '{{ v|default("x") }}', 'Apply filter to value', '{{ desc|upper }}'],
-    ['Whitespace', '{%- ... -%}', 'Trim surrounding whitespace', '{%- for x in y -%}'],
-    ['Access', 'obj.key / arr[0]', 'Dot/index navigation', '{{ loopback.ip }}']
+    ["Output", "{{ var }}", "Print a variable", "{{ hostname }}"],
+    ["Output", "obj.key / obj[\"key\"]", "Dict key or attribute; brackets for keys with dashes or spaces", "{{ device[\"serial-number\"] }}"],
+    ["Output", "list[0] / list[-1]", "Index into a list; negative counts from the end", "{{ ntp_servers[-1] }}"],
+    ["Output", "a ~ b", "Join into one string (converts numbers)", "{{ \"Vlan\" ~ vlans[0].id }}"],
+    ["Output", "x if cond else y", "Inline if", "{{ \"no shutdown\" if interfaces[0].enabled else \"shutdown\" }}"],
+    ["Comment", "{# ... #}", "Comment; never appears in the output", "{# TODO: add QoS #}"],
+    ["Loop", "{% for x in xs %}...{% endfor %}", "Loop over a list", "{% for i in interfaces %}interface {{ i.name }}\n{% endfor %}"],
+    ["Loop", "{% for x in xs if cond %}", "Loop over matching items only", "{% for i in interfaces if i.enabled %}{{ i.name }} {% endfor %}"],
+    ["Loop", "{% for ... %}{% else %}", "else runs when the list is empty", "{% for s in [] %}ntp server {{ s }}{% else %}! no NTP{% endfor %}"],
+    ["Loop", "{% for k, v in d.items() %}", "Loop over a dict", "{% for name, vid in vlan_map.items() %}vlan {{ vid }} name {{ name }}\n{% endfor %}"],
+    ["Loop", "loop.index / loop.index0", "Position, 1-based / 0-based", "{% for p in prefixes %}seq {{ loop.index * 10 }} permit {{ p }}\n{% endfor %}"],
+    ["Loop", "loop.first / loop.last / loop.length", "First / last item, item count (e.g. JSON commas)", "[{% for s in ntp_servers %}\"{{ s }}\"{{ \",\" if not loop.last }}{% endfor %}]"],
+    ["Condition", "{% if %}{% elif %}{% else %}{% endif %}", "Conditional block", "{% if interfaces[1].mode == \"access\" %}access{% elif interfaces[1].mode == \"trunk\" %}trunk{% else %}routed{% endif %}"],
+    ["Tests", "x is defined / is not defined", "Variable exists?", "{% if snmp is defined %}snmp-server community {{ snmp.community }}{% endif %}"],
+    ["Tests", "x is none", "Value is null / None", "{{ \"no IP\" if interfaces[2].ip is none }}"],
+    ["Tests", "x in list / string / dict", "Membership", "{{ \"yes\" if \"10.0.0.1\" in ntp_servers }}"],
+    ["Variables", "{% set x = value %}", "Assign a variable", "{% set mgmt_vlan = 99 %}vlan {{ mgmt_vlan }}"],
+    ["Variables", "namespace(...)", "Keep a value changed inside a loop (a plain set inside a loop is lost)", "{% set ns = namespace(up=0) %}{% for i in interfaces if i.enabled %}{% set ns.up = ns.up + 1 %}{% endfor %}{{ ns.up }} up"],
+    ["Variables", "{% set x %}...{% endset %}", "Capture rendered text into a variable", "{% set banner %}Managed by automation{% endset %}{{ banner | upper }}"],
+    ["Text", "v | default(\"x\", true)", "Fallback when undefined; with true also when empty or None", "{{ interfaces[2].description | default(\"unused\", true) }}"],
+    ["Text", "upper / lower / title / trim", "Change case, strip spaces", "{{ hostname | upper }}"],
+    ["Text", "replace(\"a\", \"b\")", "Replace text", "{{ interfaces[0].name | replace(\"GigabitEthernet\", \"Gi\") }}"],
+    ["Text", "x.split(\"/\")[0]", "Python string methods work (split, startswith, ...)", "{{ interfaces[0].ip.split(\"/\")[0] }}"],
+    ["Text", "\"%-12s %s\" | format(a, b)", "printf-style formatting, e.g. padded columns", "{{ \"%-22s %s\" | format(interfaces[0].name, interfaces[0].description) }}"],
+    ["Text", "indent(n) / indent(n, first=true)", "Indent every line after the first (or all lines)", "{{ \"a\\nb\" | indent(2, first=true) }}"],
+    ["Lists", "join(\", \")", "List to string", "{{ ntp_servers | join(\", \") }}"],
+    ["Lists", "length / first / last", "Count, first / last item", "{{ interfaces | length }}"],
+    ["Lists", "selectattr / rejectattr", "Keep / drop items by attribute test", "{{ interfaces | selectattr(\"enabled\") | map(attribute=\"name\") | list }}"],
+    ["Lists", "selectattr(\"k\", \"eq\", v)", "Keep items where an attribute equals a value", "{{ interfaces | selectattr(\"mode\", \"eq\", \"access\") | map(attribute=\"name\") | join(\",\") }}"],
+    ["Lists", "map(attribute=\"k\")", "Pick one attribute from every item", "{{ vlans | map(attribute=\"id\") | join(\",\") }}"],
+    ["Lists", "sort(attribute=\"k\") / unique", "Sort, remove duplicates", "{{ vlans | sort(attribute=\"id\", reverse=true) | map(attribute=\"name\") | join(\" \") }}"],
+    ["Lists", "groupby(\"k\")", "Group items by an attribute", "{% for mode, items in interfaces | groupby(\"mode\") %}{{ mode }}: {{ items | length }}\n{% endfor %}"],
+    ["Lists", "sum(attribute=\"k\")", "Add up a numeric attribute", "{{ interfaces | sum(attribute=\"speed\") }}"],
+    ["Convert", "int / float / string / list", "Change type", "{{ \"100\" | int + 1 }}"],
+    ["Convert", "tojson", "Value as JSON (quotes, lists, null); escapes ' as \\u0027", "{{ ntp_servers | tojson }}"],
+    ["Macro", "{% macro f(a) %}...{% endmacro %}", "Reusable block; call it like a function", "{% macro desc(t) %}description {{ t | upper }}{% endmacro %}{{ desc(\"uplink\") }}"],
+    ["Whitespace", "{%- ... -%} / {{- ... -}}", "Remove whitespace and newlines before / after the tag", "{%- for x in y -%}"],
+    ["Whitespace", "trim_blocks", "Normal mode drops the newline after a block tag; NetBox mode keeps it", "{% if x %}\\n...{% endif %}"],
+    ["Raw", "{% raw %}...{% endraw %}", "Output Jinja syntax literally", "{% raw %}{{ not rendered }}{% endraw %}"],
+    ["NetBox", "\"NAME\" | env", "Environment variable, only if allowed by JINJA_ENVIRONMENT_PARAMS (None here)", "{{ \"SITE_CODE\" | env }}"],
+    ["NetBox", "device / virtualmachine", "Set by NetBox when rendering a device / VM config: the real object, not a dict", "{{ device.name }}"],
+    ["NetBox", "ipam.Prefix.objects.filter(...)", "Database query: works only inside NetBox. Never name your own variables ipam, dcim, ...", "{% for p in ipam.Prefix.objects.filter(status=\"active\") %}"]
   ],
   'python-playground': [
     ['Flow', 'for / if / def', 'Core control structures', 'for i in value["interfaces"]'],
@@ -719,6 +761,7 @@ function getSyntaxHighlightHtml(mode, text) {
       { regex: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/, className: 'syn-string' }
     ],
     jinja2: [
+      { regex: /^\{#[\s\S]*?#\}/, className: 'syn-comment' },
       { regex: /^\{\%[\s\S]*?\%\}/, className: 'syn-keyword' },
       { regex: /^\{\{[\s\S]*?\}\}/, className: 'syn-variable' },
       { regex: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/, className: 'syn-string' },
@@ -940,9 +983,72 @@ function collectPayload(inputs, extras = {}) {
   const payload = {};
   Object.entries(inputs).forEach(([key, el]) => {
     if (key.startsWith('__')) return;
-    payload[key] = el.value;
+    payload[key] = inputValue(el);
   });
   return { ...payload, ...extras };
+}
+
+// Checkboxes send true/false; every other input sends its text value.
+function inputValue(el) {
+  return el.type === 'checkbox' ? el.checked : el.value;
+}
+
+// J2 Renderer: opt-in NetBox mode. Ticking it swaps in the NetBox sample (device + IPAM data) and
+// renders the way NetBox does. Unticking it restores the default sample. Edited content is only
+// replaced after confirmation. With the box unticked, rendering is unchanged.
+function j2SampleVars(inputs, format) {
+  return inputs.netbox_mode && inputs.netbox_mode.checked ? j2NetboxSample[format] : j2FallbackVars[format];
+}
+
+function attachNetboxControls(tool, inputs, panel) {
+  const row = document.createElement('div');
+  row.className = 'live-preview-controls netbox-controls';
+
+  const label = document.createElement('label');
+  label.className = 'live-preview-toggle';
+  label.title = 'Loads a NetBox-style sample (device, interfaces, IPAM) and renders like NetBox 4.7.4: sandboxed, no trim_blocks/lstrip_blocks, missing variables render empty, line numbers in errors.';
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.checked = false;
+  const labelText = document.createElement('span');
+  labelText.textContent = 'NetBox mode';
+  label.appendChild(toggle);
+  label.appendChild(labelText);
+  inputs.netbox_mode = toggle;
+
+  const hint = document.createElement('span');
+  hint.className = 'live-preview-status';
+  const setHint = () => {
+    hint.textContent = toggle.checked
+      ? 'NetBox sample loaded; rendering like NetBox (sandboxed, no whitespace trimming).'
+      : 'Off: standard rendering.';
+  };
+  setHint();
+
+  const defaultTemplate = (tool.fields.find((f) => f.key === 'template') || {}).value || '';
+  const knownTemplates = [defaultTemplate, j2NetboxSample.template];
+  const knownVars = [j2FallbackVars.json, j2FallbackVars.yaml, j2NetboxSample.json, j2NetboxSample.yaml,
+    (tool.fields.find((f) => f.key === 'variables') || {}).value || ''];
+  const isPristine = () => {
+    const tpl = inputs.template.value;
+    const vars = inputs.variables.value;
+    return (!tpl.trim() || knownTemplates.includes(tpl)) && (!vars.trim() || knownVars.includes(vars));
+  };
+
+  toggle.addEventListener('change', () => {
+    setHint();
+    if (!isPristine() && !window.confirm('Replace the template and variables with the ' + (toggle.checked ? 'NetBox' : 'default') + ' sample? Your edits will be lost.')) {
+      return;
+    }
+    inputs.template.value = toggle.checked ? j2NetboxSample.template : defaultTemplate;
+    inputs.variables.value = j2SampleVars(inputs, inputs.variables_format.value);
+    inputs.template.dispatchEvent(new Event('input'));
+    inputs.variables.dispatchEvent(new Event('input'));
+  });
+
+  row.appendChild(label);
+  row.appendChild(hint);
+  panel.querySelector('.grid').before(row);
 }
 
 const autoPreviewConfigs = {
@@ -955,9 +1061,19 @@ const autoPreviewConfigs = {
   regex: { delayMs: 220, required: ['pattern'] }
 };
 
+// Show an error as readable text (line breaks kept) instead of a JSON blob.
+function showOutput(outputEl, text, isError = false) {
+  outputEl.textContent = text;
+  outputEl.classList.toggle('is-error', isError);
+}
+
+function errorText(data) {
+  return data && data.error ? `Error: ${data.error}` : pretty(data);
+}
+
 function formatAutoPreviewOutput(toolId, data) {
   if (!data || data.ok !== true) {
-    return pretty(data);
+    return errorText(data);
   }
   if (toolId === 'xpath') {
     return pretty({ count: data.count, results: data.results });
@@ -1017,7 +1133,7 @@ function attachAutoPreview(tool, inputs, outputEl, panel) {
 
   controls.appendChild(label);
   controls.appendChild(status);
-  panel.querySelector('.actions').after(controls);
+  panel.querySelector('.actions').appendChild(controls);
 
   let activeRequestId = 0;
   const runPreview = async () => {
@@ -1046,12 +1162,14 @@ function attachAutoPreview(tool, inputs, outputEl, panel) {
       const data = await res.json();
       if (reqId !== activeRequestId) return;
 
-      outputEl.textContent = formatAutoPreviewOutput(tool.id, data);
+      showOutput(outputEl, formatAutoPreviewOutput(tool.id, data), !data.ok);
       if (data.ok) {
         status.textContent = 'Preview updated.';
+        status.title = '';
         status.classList.remove('error');
       } else {
-        status.textContent = data.error || 'Preview error.';
+        status.textContent = (data.error || 'Preview error.').split('\n')[0];
+        status.title = data.error || '';
         status.classList.add('error');
       }
     } catch (err) {
@@ -1101,7 +1219,7 @@ function attachPythonLintPreview(tool, inputs, panel) {
 
   controls.appendChild(label);
   controls.appendChild(status);
-  panel.querySelector('.actions').after(controls);
+  panel.querySelector('.actions').appendChild(controls);
 
   let activeLintId = 0;
   const runLint = async () => {
@@ -1239,10 +1357,10 @@ async function runTool(tool, inputs, outputEl) {
 
   const payload = {};
   Object.entries(inputs).forEach(([key, el]) => {
-    payload[key] = el.value;
+    payload[key] = inputValue(el);
   });
 
-  outputEl.textContent = 'Running...';
+  showOutput(outputEl, 'Running...');
 
   try {
     const res = await fetch(tool.endpoint, {
@@ -1253,17 +1371,54 @@ async function runTool(tool, inputs, outputEl) {
     const data = await res.json();
     if (data && data.ok === true) {
       if (Object.prototype.hasOwnProperty.call(data, 'result')) {
-        outputEl.textContent = pretty(data.result);
+        showOutput(outputEl, pretty(data.result));
       } else {
-        outputEl.textContent = pretty(data);
+        showOutput(outputEl, pretty(data));
       }
       return;
     }
-    outputEl.textContent = pretty(data);
+    showOutput(outputEl, errorText(data), true);
   } catch (err) {
-    outputEl.textContent = `Request failed: ${err}`;
+    showOutput(outputEl, `Request failed: ${err}`, true);
   }
 }
+
+// Copy button shown on hover in the top-right corner of an output box.
+function attachCopyButton(outputEl) {
+  const wrap = document.createElement('div');
+  wrap.className = 'output-wrap';
+  outputEl.before(wrap);
+  wrap.appendChild(outputEl);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy-output';
+  btn.textContent = 'Copy';
+  btn.title = 'Copy output to clipboard';
+  btn.addEventListener('click', async () => {
+    const text = outputEl.textContent || '';
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      // Fallback for browsers that block the async clipboard API (e.g. plain http on a LAN address).
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('copied');
+    }, 1200);
+  });
+  wrap.appendChild(btn);
+}
+
+const ACTIVE_TAB_KEY = 'nat_active_tab';
 
 function setActive(id) {
   document.querySelectorAll('#tabs button').forEach((btn) => {
@@ -1273,6 +1428,11 @@ function setActive(id) {
   document.querySelectorAll('.panel').forEach((panel) => {
     panel.hidden = panel.dataset.panel !== id;
   });
+  try {
+    localStorage.setItem(ACTIVE_TAB_KEY, id);
+  } catch (err) {
+    // Storage unavailable (private mode): the tab just isn't remembered.
+  }
 }
 
 function init() {
@@ -1507,6 +1667,7 @@ function init() {
       attachPythonLintPreview(tool, inputs, panel);
     }
     if (tool.id === 'jinja2') {
+      attachNetboxControls(tool, inputs, panel);
       const fmtSelect = inputs.variables_format;
       const varsInput = inputs.variables;
       fmtSelect.dataset.prevFormat = fmtSelect.value;
@@ -1516,7 +1677,7 @@ function init() {
         const currentContent = varsInput.value;
 
         if (!currentContent.trim()) {
-          varsInput.value = j2FallbackVars[targetFormat];
+          varsInput.value = j2SampleVars(inputs, targetFormat);
           fmtSelect.dataset.prevFormat = targetFormat;
           return;
         }
@@ -1535,10 +1696,10 @@ function init() {
           if (data.ok && data.result) {
             varsInput.value = data.result;
           } else {
-            varsInput.value = j2FallbackVars[targetFormat];
+            varsInput.value = j2SampleVars(inputs, targetFormat);
           }
         } catch (err) {
-          varsInput.value = j2FallbackVars[targetFormat];
+          varsInput.value = j2SampleVars(inputs, targetFormat);
         }
         fmtSelect.dataset.prevFormat = targetFormat;
       });
@@ -1704,14 +1865,26 @@ function init() {
     attachAutoPreview(tool, inputs, outputEl, panel);
     if (tool.id !== 'python-playground') {
       runBtn.addEventListener('click', () => runTool(tool, inputs, outputEl));
+      runBtn.title = 'Run (Ctrl+Enter)';
+      panel.addEventListener('keydown', (event) => {
+        if (isCodePadRunShortcut(event)) {
+          event.preventDefault();
+          runTool(tool, inputs, outputEl);
+        }
+      });
     }
+    attachCopyButton(outputEl);
 
     panelRoot.appendChild(panel);
-
-    if (idx === 0) {
-      setActive(tool.id);
-    }
   });
+
+  let savedTab = null;
+  try {
+    savedTab = localStorage.getItem(ACTIVE_TAB_KEY);
+  } catch (err) {
+    savedTab = null;
+  }
+  setActive(tools.some((t) => t.id === savedTab) ? savedTab : tools[0].id);
 }
 
 initTheme();
